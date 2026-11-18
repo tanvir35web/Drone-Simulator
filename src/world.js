@@ -7,6 +7,7 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import { makeSimplex2D, fbm, smoothstep, lerp, mulberry32 } from './noise.js';
 import * as TX from './textures.js';
 import * as HD from './texturesHD.js';
+import { flattenVillages, buildVillages, collideHouse, drawVillageMinimap, villageAt, ruralAt } from './village.js';
 
 export const SIZE = 3000;
 const SEG = 600;
@@ -43,6 +44,10 @@ function lakeFactor(x, z) {
 }
 
 function computeHeight(x, z) {
+  return flattenVillages(baseHeight(x, z), x, z, baseHeight);
+}
+
+function baseHeight(x, z) {
   const d = Math.max(Math.abs(x), Math.abs(z));
   const r = Math.hypot(x, z);
   let h = fbm(nA, x * 0.0016, z * 0.0016, 6) * 55 + 22;
@@ -100,6 +105,7 @@ export class World {
     this.buildWater();
     this.buildTown();
     this.buildStreetProps();
+    buildVillages(this, { ROADS, TOWN_EDGE, ROAD_HALF, TOWN_H, SIZE });
     this.buildTrees();
     this.buildGates();
     this.buildGroundMask();
@@ -205,6 +211,7 @@ export class World {
     if (this.buildingMat) this.buildingMat.userData.uNight.value = this.night;
     if (this.lampHeadMat) this.lampHeadMat.emissiveIntensity = 0.05 + this.night * 6;
     if (this.padLightMat) this.padLightMat.emissiveIntensity = 0.3 + this.night * 5;
+    for (const m of this.houseWinMats || []) m.emissiveIntensity = this.night * 1.6;
 
     if (this.envRT) this.envRT.dispose();
     this.envRT = this.pmrem.fromScene(this.envScene, 0.02);
@@ -285,6 +292,7 @@ export class World {
       tGravel: { value: HD.makeGravelAlbedo(r) },
       tConcrete: { value: HD.makeConcreteAlbedo(r) },
       tGround: { value: null }, // town ground features (set after the town is laid out)
+      tRural: { value: null },  // village roads, yards and fields over the whole map (village.js)
     };
     this.macroTex = tex.tMacro.value;
     this.terrainUniforms = tex;
@@ -302,7 +310,7 @@ export class World {
           vTNrm = normalize(mat3(modelMatrix) * objectNormal);`);
       shader.fragmentShader = shader.fragmentShader
         .replace('#include <common>', `#include <common>
-          uniform sampler2D tGrass, tDirt, tRock, tSand, tSnow, tMacro, tGravel, tConcrete, tGround;
+          uniform sampler2D tGrass, tDirt, tRock, tSand, tSnow, tMacro, tGravel, tConcrete, tGround, tRural;
           float gH;
           // derivative-based bump mapping (no UVs / tangents needed)
           vec3 terrainBump(vec3 surfPos, vec3 n, vec2 dHdxy) {
@@ -356,6 +364,25 @@ export class World {
           baseCol = mix(baseCol, cD * vec3(0.92, 0.9, 0.86), fDirt * 0.9);
           baseCol = mix(baseCol, cGr, fPath);
           baseCol = mix(baseCol, cCo, fConc);
+
+          // Countryside: crop fields, worn farm yards and dirt roads (village.js)
+          vec4 rm = texture2D(tRural, (wxz + ${HALF.toFixed(1)}) / ${SIZE.toFixed(1)});
+          float fFA = smoothstep(0.35, 0.65, rm.b);
+          float fFB = smoothstep(0.35, 0.65, rm.a);
+          if (fFA + fFB > 0.001) {
+            float rowsA = 0.5 + 0.5 * sin(wxz.x * 2.6 + en * 2.0);
+            float rowsB = 0.5 + 0.5 * sin(wxz.y * 2.4 + en * 2.0);
+            // A: ripe cereal, B: green crop rows over tilled soil
+            vec3 wheat = mix(vec3(0.27, 0.18, 0.05), vec3(0.38, 0.27, 0.08), m2) * mix(0.8, 1.06, rowsA) * (0.9 + m1 * 0.2);
+            vec3 crop = mix(cD * vec3(0.78, 0.72, 0.66), cG * vec3(0.85, 1.12, 0.7), smoothstep(0.3, 0.7, rowsB));
+            baseCol = mix(baseCol, wheat, fFA);
+            baseCol = mix(baseCol, crop, fFB);
+          }
+          float fYard = smoothstep(0.15, 0.85, rm.g + en * 0.5 + en2 * 0.3) * 0.85;
+          float fRoad = smoothstep(0.3, 0.6, rm.r + en2 * 0.18);
+          baseCol = mix(baseCol, cD * vec3(0.92, 0.88, 0.82), fYard);
+          vec3 dirtRoad = mix(cD * vec3(1.02, 0.94, 0.84), cGr * 0.95, 0.35 + en * 0.4);
+          baseCol = mix(baseCol, dirtRoad, fRoad);
           diffuseColor.rgb = baseCol * 0.88;
           // height for bump lighting: mostly low-frequency undulation, a little texture detail
           gH = en * 0.6 + en2 * 0.35 + dot(alb, vec3(0.3, 0.59, 0.11)) * 0.12 - fConc * 0.1;`)
@@ -443,6 +470,7 @@ export class World {
     const edges = [-TOWN_EDGE, ...ROADS, TOWN_EDGE];
     const lots = [];
     this.parkBlocks = [];
+    this.residentialBlocks = [];
     for (let bi = 0; bi < edges.length - 1; bi++) {
       for (let bj = 0; bj < edges.length - 1; bj++) {
         const x0 = edges[bi] + (bi === 0 ? 2 : ROAD_HALF + 2);
@@ -452,6 +480,8 @@ export class World {
         const central = x0 < 0 && x1 > 0 && z0 < 0 && z1 > 0;
         if (central || rand() < 0.1) { this.parkBlocks.push({ x0, x1, z0, z1, central }); continue; }
         const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+        // South-west quarter, far from downtown: low-rise houses with gardens (built in village.js)
+        if (cx < -40 && cz > 40) { this.residentialBlocks.push({ x0, x1, z0, z1 }); continue; }
         const downtown = Math.exp(-Math.hypot(cx - 150, cz + 150) / 130);
         const nx = x1 - x0 > 50 ? 2 : 1, nz = z1 - z0 > 50 ? 2 : 1;
         const lw = (x1 - x0) / nx, ld = (z1 - z0) / nz;
@@ -951,11 +981,17 @@ export class World {
   buildTrees() {
     const rand = mulberry32(999);
     const pts = [];
-    const tryAdd = (x, z, kind, scale) => {
+    const tryAdd = (x, z, kind, scale, force = false) => {
       const h = this.heightAt(x, z);
       if (h < 1.2 || h > 215) return false;
       if (this.slopeAt(x, z) > 0.7) return false;
       if (lakeFactor(x, z) > 0.12) return false;
+      if (!force) {
+        // keep village cores, roads, yards and fields clear of wild trees
+        if (villageAt(x, z, 1.1)) return false;
+        const rm = ruralAt(this, x, z);
+        if (rm && (rm[0] > 40 || rm[1] > 90 || rm[2] > 30 || rm[3] > 30)) return false;
+      }
       pts.push({ x, z, y: h, kind, s: scale, rot: rand() * Math.PI * 2 });
       return true;
     };
@@ -991,8 +1027,10 @@ export class World {
         else tryAdd(off, s, 1, 0.45 + rand() * 0.25);
       }
     }
-    const clear = pts.filter((t) => !this.buildings.some((b) =>
-      t.x > b.minX - 2 && t.x < b.maxX + 2 && t.z > b.minZ - 2 && t.z < b.maxZ + 2));
+    // garden and village trees (village.js)
+    for (const t of this.extraTrees || []) tryAdd(t.x, t.z, t.kind, t.s, true);
+    const inBox = (t) => (b) => t.x > b.minX - 2 && t.x < b.maxX + 2 && t.z > b.minZ - 2 && t.z < b.maxZ + 2;
+    const clear = pts.filter((t) => !this.buildings.some(inBox(t)) && !(this.houseBoxes || []).some(inBox(t)));
 
     const G = this.buildTreeGeometries();
     const bark = TX.makeBarkTexture(this.renderer);
@@ -1092,6 +1130,8 @@ export class World {
         P.ctx.beginPath(); P.ctx.arc(cx, cz, 5, 0, Math.PI * 2); P.ctx.stroke();
       }
     }
+    // gravel drives in the residential quarter
+    for (const d of this.driveways || []) P.ctx.fillRect(d.x0, d.z0, d.x1 - d.x0, d.z1 - d.z0);
 
     // G: worn soil - patches, road verges, around gate posts
     const D = layer();
@@ -1180,12 +1220,15 @@ export class World {
             }
           }
         }
+        // no wild grass on dirt roads or crop fields, thinner in farm yards
+        const rm = ruralAt(this, wx, z);
+        if (rm) d *= (1 - Math.min(1, Math.max(rm[0], rm[2], rm[3]) / 90)) * (1 - (rm[1] / 255) * 0.7);
         // sparse, clumpy tufts instead of a continuous carpet
         d *= smoothstep(0.05, 0.55, nG(wx * 0.06, z * 0.06) * 0.6 + nG(wx * 0.23 + 40, z * 0.23) * 0.4) * 0.7;
         data[y * size + x] = Math.max(0, Math.min(255, d * 255));
       }
     }
-    for (const b of this.buildings) {
+    for (const b of this.buildings.concat(this.houseBoxes || [])) {
       const x0 = Math.floor((b.minX + HALF) / px), x1 = Math.ceil((b.maxX + HALF) / px);
       const z0 = Math.floor((b.minZ + HALF) / px), z1 = Math.ceil((b.maxZ + HALF) / px);
       for (let y = z0; y <= z1; y++) for (let x = x0; x <= x1; x++) data[y * size + x] = 0;
@@ -1272,6 +1315,10 @@ export class World {
         }
       }
     }
+    for (const h of this.houses) {
+      if (Math.abs(p.x - h.x) > h.rad + r || Math.abs(p.z - h.z) > h.rad + r) continue;
+      if (collideHouse(h, p, r, hit)) return hit;
+    }
     const ix = Math.floor(p.x / 16), iz = Math.floor(p.z / 16);
     for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
       const list = this.treeGrid.get((ix + a + 1000) * 4000 + (iz + b + 1000));
@@ -1345,6 +1392,7 @@ export class World {
     }
     ctx.putImageData(img, 0, 0);
     const px = (v) => ((v + HALF) / SIZE) * S;
+    drawVillageMinimap(this, ctx, px, S / SIZE);
     ctx.fillStyle = '#5a5a5a';
     for (const r of ROADS) {
       ctx.fillRect(px(-TOWN_EDGE), px(r - ROAD_HALF), px(TOWN_EDGE) - px(-TOWN_EDGE), (ROAD_HALF * 2 * S) / SIZE + 0.5);
