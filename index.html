@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Drone Simulator</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <div id="app">
+    <div id="hud" class="hidden">
+      <div class="panel hud-tl">
+        <div class="row"><span id="h-armed" class="badge off">DISARMED</span><span id="h-mode" class="badge mode">GPS</span></div>
+        <div class="row small"><span class="lbl">VIEW</span><span id="h-view">Chase</span></div>
+        <div class="row small"><span class="lbl">INPUT</span><span id="h-input">Keyboard</span></div>
+        <div class="row small"><span class="lbl">DRONE</span><span id="h-profile">Camera drone</span></div>
+      </div>
+
+      <div class="panel hud-tr">
+        <div class="batt"><div id="h-batt-bar"></div><span id="h-batt">100%</span></div>
+        <div class="row small"><span class="lbl">VOLT</span><span id="h-volt">16.8 V</span><span class="lbl">PWR</span><span id="h-pwr">0 W</span></div>
+        <div class="row small"><span class="lbl">TIME</span><span id="h-time">00:00</span><span class="lbl">WIND</span><span id="h-wind">0 m/s</span></div>
+      </div>
+
+      <div id="race" class="panel hud-tc">
+        <div><span class="lbl">GATE</span> <span id="r-gate">1/8</span></div>
+        <div><span class="lbl">LAP</span> <span id="r-lap">--:--.-</span></div>
+        <div><span class="lbl">LAST</span> <span id="r-last">--</span></div>
+        <div><span class="lbl">BEST</span> <span id="r-best">--</span></div>
+      </div>
+
+      <div id="osd" class="hidden">
+        <div class="cross"></div>
+      </div>
+
+      <div class="hud-bottom">
+        <div class="panel sticks-panel">
+          <canvas id="sticks" width="220" height="100"></canvas>
+          <div class="thr-bar"><div id="h-thr"></div></div>
+        </div>
+        <div class="panel tele">
+          <canvas id="attitude" width="120" height="120"></canvas>
+          <div class="tele-grid">
+            <span class="lbl">ALT</span><span id="t-alt">0.0 m</span>
+            <span class="lbl">SPD</span><span id="t-spd">0 km/h</span>
+            <span class="lbl">V/S</span><span id="t-vs">0.0 m/s</span>
+            <span class="lbl">DIST</span><span id="t-dist">0 m</span>
+            <span class="lbl">HDG</span><span id="t-hdg">000°</span>
+          </div>
+        </div>
+        <div class="panel map-panel">
+          <canvas id="minimap" width="180" height="180"></canvas>
+        </div>
+      </div>
+
+      <div id="pip-frame" class="hidden"><span id="pip-label">FPV</span></div>
+      <div id="toast"></div>
+      <div id="crash" class="hidden"><div class="crash-title">CRASH</div><div id="crash-reason"></div><div class="crash-hint">Press <kbd>R</kbd> to reset</div></div>
+      <div id="hint" class="panel"></div>
+    </div>
+
+    <div id="loading" class="overlay">
+      <div class="card">
+        <h1>Drone Simulator</h1>
+        <p id="loading-text">Generating terrain...</p>
+      </div>
+    </div>
+
+    <div id="start" class="overlay hidden">
+      <div class="card wide">
+        <h1>Drone Simulator</h1>
+        <p class="sub">Realistic quadcopter physics, three flight modes, six camera views, keyboard or joystick control.</p>
+        <div class="cols">
+          <div>
+            <h3>Keyboard (Mode 2)</h3>
+            <table class="keys">
+              <tr><td><kbd>W</kbd>/<kbd>S</kbd></td><td>Throttle up / down</td></tr>
+              <tr><td><kbd>A</kbd>/<kbd>D</kbd></td><td>Yaw left / right</td></tr>
+              <tr><td><kbd>&uarr;</kbd>/<kbd>&darr;</kbd></td><td>Pitch forward / back</td></tr>
+              <tr><td><kbd>&larr;</kbd>/<kbd>&rarr;</kbd></td><td>Roll left / right</td></tr>
+              <tr><td><kbd>Shift</kbd></td><td>Full stick deflection</td></tr>
+              <tr><td><kbd>Space</kbd></td><td>Arm / disarm motors</td></tr>
+            </table>
+          </div>
+          <div>
+            <h3>Functions</h3>
+            <table class="keys">
+              <tr><td><kbd>C</kbd> / <kbd>1</kbd>-<kbd>6</kbd></td><td>Change camera view</td></tr>
+              <tr><td><kbd>V</kbd></td><td>Picture-in-picture</td></tr>
+              <tr><td><kbd>M</kbd></td><td>Flight mode GPS / Angle / Acro</td></tr>
+              <tr><td><kbd>X</kbd></td><td>Return to home (GPS)</td></tr>
+              <tr><td><kbd>Q</kbd>/<kbd>E</kbd></td><td>Camera tilt</td></tr>
+              <tr><td><kbd>R</kbd> &middot; <kbd>G</kbd></td><td>Reset drone &middot; Reset race</td></tr>
+              <tr><td><kbd>H</kbd> &middot; <kbd>Esc</kbd></td><td>Help &middot; Settings</td></tr>
+            </table>
+          </div>
+        </div>
+        <p class="note">Joystick / gamepad / USB RC transmitter: connect it and move a stick. Remap axes in <b>Settings &rarr; Controls</b>.
+          Start in <b>GPS mode</b>: arm with Space, hold W to take off. Fly through the 8 orange gates around the helipad.</p>
+        <button id="start-btn" class="btn primary">Start flying</button>
+      </div>
+    </div>
+
+    <div id="menu" class="overlay hidden">
+      <div class="card menu-card">
+        <div class="menu-head">
+          <h2>Settings</h2>
+          <div class="tabs" id="tabs"></div>
+          <button class="btn" id="menu-close">Resume (Esc)</button>
+        </div>
+        <div id="menu-body"></div>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
