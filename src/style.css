@@ -289,6 +289,23 @@ kbd { display: inline-block; min-width: 22px; padding: 1px 6px; border: 1px soli
 /* ------------------------------------------------------------------ */
 :root { --display: Bahnschrift, 'DIN Alternate', 'Segoe UI', system-ui, sans-serif; }
 
+/* Loading screen */
+.loading-screen { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center;
+  padding: 16px; background:
+    radial-gradient(ellipse at 50% 40%, rgba(255,122,26,0.08), rgba(255,122,26,0) 55%),
+    linear-gradient(180deg, #0b1016 0%, #06090d 100%);
+  transition: opacity .4s ease-out, visibility .4s; }
+.loading-screen.done { opacity: 0; visibility: hidden; pointer-events: none; }
+.loading-main { width: min(460px, 100%); animation: fadein .4s ease-out both; }
+.loading-main .title { font-size: clamp(40px, 8vw, 72px); }
+.load-bar { margin-top: 32px; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.08); overflow: hidden; }
+#loading-fill { height: 100%; width: 0; background: var(--accent); box-shadow: 0 0 12px rgba(255,122,26,0.6);
+  transition: width .35s ease-out; }
+.load-meta { display: flex; justify-content: space-between; gap: 12px; margin-top: 10px; font-size: 13px; color: var(--muted); }
+#loading-pct { font-family: var(--mono); color: var(--text); }
+.loading-screen.error #loading-fill { background: var(--bad); box-shadow: none; }
+.loading-screen.error #loading-text { color: var(--bad); }
+
 .start-screen { position: fixed; inset: 0; z-index: 10; color: var(--text); overflow: hidden; }
 .start-shade {
   position: absolute; inset: 0; pointer-events: none;

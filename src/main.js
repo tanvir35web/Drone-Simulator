@@ -8,6 +8,7 @@ import { HUD } from './hud.js';
 import { DroneAudio } from './audio.js';
 import { Menu, loadSettings, saveSettings } from './ui.js';
 import { GrassField } from './grass.js';
+import { DroneShadow } from './droneShadow.js';
 
 
 const PHYS_DT = 1 / 500;
@@ -22,7 +23,7 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
 const scene = new THREE.Scene();
 
-let world, fm, model, rig, input, hud, audio, menu, grass;
+let world, fm, model, rig, input, hud, audio, menu, grass, droneShadow;
 let paused = true;
 let simTime = 0;
 let acc = 0;
@@ -33,7 +34,6 @@ let lastT = performance.now();
 const clock = { getDelta() { const n = performance.now(); const d = (n - lastT) / 1000; lastT = n; return d; } };
 const omegas = [0, 0, 0, 0];
 let startVisible = false;
-let cineT = 0;
 
 const MODE_DESC = {
   GPS: 'Holds position and height when you let go of the sticks. The easiest way to start, like a consumer camera drone.',
@@ -41,7 +41,16 @@ const MODE_DESC = {
   ACRO: 'No self-levelling: the sticks set rotation speed. How FPV pilots fly flips and rolls.',
 };
 
-function setLoading(t) { document.getElementById('loading-text').textContent = t; }
+function setLoading(t, pct) {
+  document.getElementById('loading-text').textContent = t;
+  if (pct != null) {
+    document.getElementById('loading-fill').style.width = `${pct}%`;
+    document.getElementById('loading-pct').textContent = `${pct}%`;
+  }
+}
+// Yield a frame so the loading screen repaints before the next blocking step
+// (timer rather than rAF so loading still progresses in a background tab)
+const nextFrame = () => new Promise((r) => setTimeout(r, 30));
 
 function resize() {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, settings.pixelRatio));
@@ -57,6 +66,7 @@ function buildDrone() {
   if (model) scene.remove(model.root);
   model = createDroneModel(fm.p, renderer);
   scene.add(model.root);
+  droneShadow.setModel(model, fm.p);
 }
 
 function resetDrone() {
@@ -212,16 +222,15 @@ function setupStartScreen() {
   syncStartScreen();
 }
 
-/** Slow cinematic orbit around the parked drone behind the title screen. */
-function cinematicCamera(dt) {
-  cineT += dt;
+/** Fixed camera framing the parked drone behind the title screen. */
+function cinematicCamera() {
   const cam = rig.main;
   const arm = fm.p.armLength;
   const r = 0.55 + arm * 7.5;
-  const ang = cineT * 0.1 + 2.4;
+  const ang = 2.4;
   const p = fm.pos;
   cam.up.set(0, 1, 0);
-  cam.position.set(p.x + Math.sin(ang) * r, p.y + 0.25 + arm * 2.2 + Math.sin(cineT * 0.21) * arm, p.z + Math.cos(ang) * r);
+  cam.position.set(p.x + Math.sin(ang) * r, p.y + 0.25 + arm * 2.2, p.z + Math.cos(ang) * r);
   // aim to the left of the drone so it sits in the open right half of the screen
   const dir = new THREE.Vector3().subVectors(p, cam.position).normalize();
   const right = new THREE.Vector3().crossVectors(dir, cam.up).normalize();
@@ -344,10 +353,11 @@ function loop() {
     { pos: fm.pos, thrustFrac: thrAvg, agl: Math.max(0, fm.pos.y - fm.gear - groundH), size: fm.p.armLength / 0.18 }, env.wind);
   world.update(dt, fm.pos);
   world.updateWindsock(dt, env.wind, world.time);
+  droneShadow.update(fm.pos);
 
   const scale = fm.p.armLength / 0.18;
   rig.shake = fm.armed ? 0.3 + thrAvg * 1.5 : 0;
-  if (startVisible) cinematicCamera(dt);
+  if (startVisible) cinematicCamera();
   else rig.update(dt, fm, model, scale);
   if (startVisible && hud.frame % 30 === 0) {
     const pads = input.listGamepads();
@@ -370,19 +380,25 @@ function loop() {
 }
 
 async function init() {
-  setLoading('Generating terrain, town and forests...');
-  await new Promise((r) => setTimeout(r, 30));
+  setLoading('Generating terrain, town and forests...', 10);
+  await nextFrame();
   resize();
   world = new World(scene, renderer);
+  droneShadow = new DroneShadow(scene, renderer, world);
+  setLoading('Setting up flight systems...', 55);
+  await nextFrame();
   fm = new FlightModel(world, settings.profile);
   fm.mode = settings.mode;
   input = new Input();
   audio = new DroneAudio();
   hud = new HUD(world);
   rig = new CameraRig(renderer.domElement, world);
-  setLoading('Planting grass...');
+  setLoading('Planting grass...', 70);
+  await nextFrame();
   const mask = world.buildGrassMask(1024);
   grass = new GrassField(scene, world, mask.data, mask.size);
+  setLoading('Assembling drone...', 90);
+  await nextFrame();
   buildDrone();
   resetDrone();
   // Any way of closing settings (Resume, X, backdrop, Esc) unpauses the sim
@@ -392,7 +408,8 @@ async function init() {
   rig.setView(0, fm);
   resize();
 
-  document.getElementById('loading').classList.add('hidden');
+  setLoading('Ready', 100);
+  document.getElementById('loading').classList.add('done');
   setupStartScreen();
   toggleStart();
   document.getElementById('start-btn').textContent = 'Start flying';
@@ -407,5 +424,6 @@ async function init() {
 
 init().catch((e) => {
   console.error(e);
+  document.getElementById('loading').classList.add('error');
   setLoading(`Failed to start: ${e.message}. WebGL 2 support is required.`);
 });
