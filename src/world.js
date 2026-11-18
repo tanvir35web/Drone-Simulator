@@ -22,6 +22,10 @@ const ROADS = [-200, -120, -40, 40, 120, 200];
 const TOWN_EDGE = 240;
 const ROAD_HALF = 6;
 const TREE_TILE = 375;
+const TOWN_MASK_HALF = 256;
+export const PAD_HALF = 6;     // helipad is 12 m x 12 m
+export const PAD_H = 0.15;     // raised concrete slab
+const WINDSOCK_POS = [-8.4, -8.4];
 
 const nA = makeSimplex2D(101);
 const nB = makeSimplex2D(202);
@@ -29,6 +33,7 @@ const nC = makeSimplex2D(303);
 const nD = makeSimplex2D(404);
 const nE = makeSimplex2D(505);
 const nF = makeSimplex2D(606);
+const nG = makeSimplex2D(707);
 
 function lakeFactor(x, z) {
   const ang = Math.atan2(z - LAKE.z, x - LAKE.x);
@@ -97,12 +102,14 @@ export class World {
     this.buildStreetProps();
     this.buildTrees();
     this.buildGates();
+    this.buildGroundMask();
     this.buildMinimap();
     this.setTimeOfDay(38, 135);
   }
 
   // ---------- height queries ----------
   heightAt(x, z) {
+    if (x > -PAD_HALF && x < PAD_HALF && z > -PAD_HALF && z < PAD_HALF) return TOWN_H + PAD_H;
     let fx = (x + HALF) / STEP, fz = (z + HALF) / STEP;
     fx = Math.min(Math.max(fx, 0), SEG - 0.0001);
     fz = Math.min(Math.max(fz, 0), SEG - 0.0001);
@@ -184,8 +191,8 @@ export class World {
 
     const sunCol = new THREE.Color(1, 0.97, 0.92).lerp(new THREE.Color(1.0, 0.6, 0.34), golden * 0.9);
     this.sun.color.copy(sunCol);
-    this.sun.intensity = 2.8 * day * (elevationDeg > -1 ? 1 : 0);
-    this.hemi.intensity = 0.12 + 0.38 * day;
+    this.sun.intensity = 2.45 * day * (elevationDeg > -1 ? 1 : 0);
+    this.hemi.intensity = 0.1 + 0.3 * day;
 
     const fogDay = new THREE.Color(0xbfd0e0);
     const fogGold = new THREE.Color(0xd8b394);
@@ -197,6 +204,7 @@ export class World {
     if (this.water) this.water.material.uniforms.sunDirection.value.copy(this.sunDir).normalize();
     if (this.buildingMat) this.buildingMat.userData.uNight.value = this.night;
     if (this.lampHeadMat) this.lampHeadMat.emissiveIntensity = 0.05 + this.night * 6;
+    if (this.padLightMat) this.padLightMat.emissiveIntensity = 0.3 + this.night * 5;
 
     if (this.envRT) this.envRT.dispose();
     this.envRT = this.pmrem.fromScene(this.envScene, 0.02);
@@ -248,7 +256,6 @@ export class World {
       const dry = dryAmt * 0.55 * (1 - town);
       tr += dry * 0.25; tg += dry * 0.05; tb -= dry * 0.3;
       tr -= forest * 0.18; tg -= forest * 0.1; tb -= forest * 0.15;
-      tg += town * 0.06;
       const vv = 0.9 + v * 0.2;
       if (h < 0) { tr *= 0.65; tg *= 0.65; tb *= 0.6; }
       tint[i * 3] = tr * vv; tint[i * 3 + 1] = tg * vv; tint[i * 3 + 2] = tb * vv;
@@ -275,9 +282,14 @@ export class World {
       tSand: { value: HD.makeSandAlbedo(r) },
       tSnow: { value: HD.makeSnowAlbedo(r) },
       tMacro: { value: HD.makeMacroNoise(r) },
+      tGravel: { value: HD.makeGravelAlbedo(r) },
+      tConcrete: { value: HD.makeConcreteAlbedo(r) },
+      tGround: { value: null }, // town ground features (set after the town is laid out)
     };
     this.macroTex = tex.tMacro.value;
-    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0 });
+    this.terrainUniforms = tex;
+    // envMapIntensity < 1: matte ground should not mirror the bright sky at grazing angles
+    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0, envMapIntensity: 0.45 });
     mat.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, tex);
       shader.vertexShader = shader.vertexShader
@@ -290,7 +302,16 @@ export class World {
           vTNrm = normalize(mat3(modelMatrix) * objectNormal);`);
       shader.fragmentShader = shader.fragmentShader
         .replace('#include <common>', `#include <common>
-          uniform sampler2D tGrass, tDirt, tRock, tSand, tSnow, tMacro;
+          uniform sampler2D tGrass, tDirt, tRock, tSand, tSnow, tMacro, tGravel, tConcrete, tGround;
+          float gH;
+          // derivative-based bump mapping (no UVs / tangents needed)
+          vec3 terrainBump(vec3 surfPos, vec3 n, vec2 dHdxy) {
+            vec3 sx = dFdx(surfPos), sy = dFdy(surfPos);
+            vec3 r1 = cross(sy, n), r2 = cross(n, sx);
+            float det = dot(sx, r1);
+            vec3 grad = sign(det) * (dHdxy.x * r1 + dHdxy.y * r2);
+            return normalize(abs(det) * n - grad);
+          }
           varying vec4 vSplat; varying float vSnow; varying vec3 vTPos; varying vec3 vTNrm;
           vec3 antiTile(sampler2D t, vec2 uv) {
             vec3 a = texture2D(t, uv).rgb;
@@ -319,9 +340,38 @@ export class World {
           vec3 alb = cG * w.x + cD * w.y + cR * w.z + cS * w.w;
           alb = mix(alb, cN, smoothstep(0.35, 0.65, vSnow + (m2 - 0.5) * 0.5));
           alb *= mix(0.8, 1.12, m1);
-          diffuseColor.rgb *= alb;`)
+          vec3 baseCol = diffuseColor.rgb * alb;
+
+          // Town ground features: gravel paths, worn soil, concrete aprons
+          vec2 tuv = (wxz + ${TOWN_MASK_HALF.toFixed(1)}) / ${(TOWN_MASK_HALF * 2).toFixed(1)};
+          vec3 gm = vec3(0.0);
+          if (tuv.x > 0.0 && tuv.x < 1.0 && tuv.y > 0.0 && tuv.y < 1.0) gm = texture2D(tGround, tuv).rgb;
+          float en = texture2D(tMacro, wxz * 0.09).r - 0.5;
+          float en2 = texture2D(tMacro, wxz * 0.31).r - 0.5;
+          float fPath = smoothstep(0.32, 0.62, gm.r + en * 0.3 + en2 * 0.2);
+          float fDirt = smoothstep(0.15, 0.75, gm.g + en * 0.55 + en2 * 0.25);
+          float fConc = smoothstep(0.42, 0.58, gm.b + en2 * 0.08);
+          vec3 cGr = antiTile(tGravel, wxz * 0.32);
+          vec3 cCo = texture2D(tConcrete, wxz * 0.25).rgb * 0.82;
+          baseCol = mix(baseCol, cD * vec3(0.92, 0.9, 0.86), fDirt * 0.9);
+          baseCol = mix(baseCol, cGr, fPath);
+          baseCol = mix(baseCol, cCo, fConc);
+          diffuseColor.rgb = baseCol * 0.88;
+          // height for bump lighting: mostly low-frequency undulation, a little texture detail
+          gH = en * 0.6 + en2 * 0.35 + dot(alb, vec3(0.3, 0.59, 0.11)) * 0.12 - fConc * 0.1;`)
         .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
-          roughnessFactor = mix(roughnessFactor, 0.55, smoothstep(0.4, 0.8, vSnow));`);
+          roughnessFactor = mix(roughnessFactor, 0.55, smoothstep(0.4, 0.8, vSnow));
+          roughnessFactor = mix(roughnessFactor, 0.85, fConc);`);
+    };
+    const prevCompile = mat.onBeforeCompile;
+    mat.onBeforeCompile = (shader) => {
+      prevCompile(shader);
+      shader.fragmentShader = shader.fragmentShader.replace('#include <normal_fragment_begin>', `#include <normal_fragment_begin>
+        {
+          float bumpFade = 1.0 - smoothstep(10.0, 60.0, length(vViewPosition));
+          vec2 dH = vec2(dFdx(gH), dFdy(gH)) * 1.2 * bumpFade;
+          normal = terrainBump(-vViewPosition, normal, dH);
+        }`);
     };
     this.terrain = new THREE.Mesh(geo, mat);
     this.terrain.receiveShadow = true;
@@ -369,7 +419,7 @@ export class World {
     const roadTex = TX.makeRoadTexture(this.renderer);
     roadTex.repeat.set((TOWN_EDGE * 2) / 24, 1);
     const roadMat = new THREE.MeshStandardMaterial({
-      map: roadTex, roughness: 0.88, metalness: 0,
+      map: roadTex, roughness: 0.92, metalness: 0, envMapIntensity: 0.5,
       polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
     });
     const roadGeo = new THREE.PlaneGeometry(TOWN_EDGE * 2 + ROAD_HALF * 2, ROAD_HALF * 2);
@@ -386,14 +436,7 @@ export class World {
       this.scene.add(b);
     });
 
-    const pad = new THREE.Mesh(
-      new THREE.PlaneGeometry(10, 10).rotateX(-Math.PI / 2),
-      new THREE.MeshStandardMaterial({ map: TX.makeHelipadTexture(this.renderer), roughness: 0.85,
-        polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 })
-    );
-    pad.position.set(0, TOWN_H + 0.009, 0);
-    pad.receiveShadow = true;
-    this.scene.add(pad);
+    this.buildHelipad();
 
     // Lots
     const rand = mulberry32(777);
@@ -427,17 +470,24 @@ export class World {
 
     const geo = new THREE.BoxGeometry(1, 1, 1);
     geo.translate(0, 0.5, 0);
-    const styleAttr = new THREE.InstancedBufferAttribute(new Float32Array(lots.length * 3), 3);
-    lots.forEach((l, i) => styleAttr.setXYZ(i, l.floorH, l.colW, l.style));
+    const styleAttr = new THREE.InstancedBufferAttribute(new Float32Array(lots.length * 4), 4);
+    lots.forEach((l, i) => {
+      l.roofType = Math.abs(Math.sin(l.x * 12.9898 + l.z * 78.233) * 43758.5453) % 1;
+      styleAttr.setXYZW(i, l.floorH, l.colW, l.style, l.roofType);
+    });
     geo.setAttribute('aStyle', styleAttr);
 
     const mat = new THREE.MeshStandardMaterial({ roughness: 0.8, metalness: 0.02 });
     const uNight = { value: 0 };
     mat.userData.uNight = uNight;
+    const roofTiles = { value: HD.makeRoofTiles(this.renderer) };
+    const roofGravel = { value: HD.makeGravelAlbedo(this.renderer) };
     mat.onBeforeCompile = (shader) => {
       shader.uniforms.uNight = uNight;
+      shader.uniforms.tRoofTiles = roofTiles;
+      shader.uniforms.tRoofGravel = roofGravel;
       shader.vertexShader = shader.vertexShader
-        .replace('#include <common>', '#include <common>\nattribute vec3 aStyle;\nvarying vec3 vStyle;\nvarying vec3 vWPos;\nvarying vec3 vWNorm;')
+        .replace('#include <common>', '#include <common>\nattribute vec4 aStyle;\nvarying vec4 vStyle;\nvarying vec3 vWPos;\nvarying vec3 vWNorm;')
         .replace('#include <fog_vertex>', `#include <fog_vertex>
           vec4 wp4 = vec4(transformed, 1.0);
           vec3 wn = objectNormal;
@@ -451,7 +501,8 @@ export class World {
       shader.fragmentShader = shader.fragmentShader
         .replace('#include <common>', `#include <common>
           uniform float uNight;
-          varying vec3 vStyle;
+          uniform sampler2D tRoofTiles, tRoofGravel;
+          varying vec4 vStyle;
           varying vec3 vWPos;
           varying vec3 vWNorm;
           float bhash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }`)
@@ -483,10 +534,16 @@ export class World {
           diffuseColor.rgb *= 1.0 - slab * 0.18;
           diffuseColor.rgb *= mix(1.0, 0.72, isWall * ground * (1.0 - shop));
           diffuseColor.rgb *= mix(0.78, 1.0, smoothstep(0.0, 6.0, floorH));
-          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.2, 0.2, 0.21), step(0.5, vWNorm.y));
+          // Flat roofs: concrete pavers, gravel ballast or dark bitumen membrane
+          float isRoof = step(0.5, vWNorm.y);
+          vec3 rT = texture2D(tRoofTiles, vWPos.xz * 0.25).rgb;
+          vec3 rG = texture2D(tRoofGravel, vWPos.xz * 0.35).rgb;
+          vec3 roofCol = vStyle.w < 0.4 ? rT : (vStyle.w < 0.72 ? rG * 1.05 : rG * vec3(0.4, 0.4, 0.43));
+          diffuseColor.rgb = mix(diffuseColor.rgb, roofCol, isRoof);
           float glassy = max(win * (1.0 - rim), shop);`)
         .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
-          roughnessFactor = mix(roughnessFactor, 0.05, glassy);`)
+          roughnessFactor = mix(roughnessFactor, 0.05, glassy);
+          roughnessFactor = mix(roughnessFactor, 0.95, isRoof);`)
         .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
           metalnessFactor = mix(metalnessFactor, 0.85, glassy);`)
         .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
@@ -505,6 +562,7 @@ export class World {
       inst.setMatrixAt(i, m);
       col.setHex(l.style === 1 ? 0x5d6870 : palette[Math.floor(rand() * palette.length)], THREE.SRGBColorSpace);
       inst.setColorAt(i, col);
+      l.color = col.clone();
       this.buildings.push({
         minX: l.x - l.w / 2, maxX: l.x + l.w / 2,
         minZ: l.z - l.d / 2, maxZ: l.z + l.d / 2,
@@ -517,26 +575,199 @@ export class World {
     this.scene.add(inst);
     this.buildingMesh = inst;
 
-    // Roof parapet / cornice and rooftop plant
-    const capGeo = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
-    const caps = new THREE.InstancedMesh(capGeo, new THREE.MeshStandardMaterial({ color: 0x77736c, roughness: 0.85 }), lots.length);
-    const roofs = new THREE.InstancedMesh(capGeo, new THREE.MeshStandardMaterial({ color: 0x9a9a96, roughness: 0.5, metalness: 0.5 }), lots.length * 3);
-    let k = 0;
-    lots.forEach((l, i) => {
-      m.makeScale(l.w + 0.5, 0.9, l.d + 0.5);
-      m.setPosition(l.x, TOWN_H + l.h - 0.3, l.z);
-      caps.setMatrixAt(i, m);
-      for (let j = 0; j < 3; j++) {
-        const sx = 1.2 + rand() * 3.5, sz = 1.2 + rand() * 3.5, sy = 0.8 + rand() * (j === 0 ? 3 : 1.5);
-        m.makeScale(sx, sy, sz);
-        m.setPosition(l.x + (rand() - 0.5) * Math.max(0, l.w - sx - 2), TOWN_H + l.h, l.z + (rand() - 0.5) * Math.max(0, l.d - sz - 2));
-        roofs.setMatrixAt(k++, m);
-      }
-    });
-    caps.castShadow = caps.receiveShadow = true;
-    roofs.castShadow = roofs.receiveShadow = true;
-    this.scene.add(caps, roofs);
+    this.buildRooftops(lots);
     this.lots = lots;
+  }
+
+  // ---------- helipad ----------
+  buildHelipad() {
+    const r = this.renderer;
+    const size = PAD_HALF * 2;
+    const topMat = new THREE.MeshStandardMaterial({ map: HD.makeHelipadTop(r, size), roughness: 0.93, envMapIntensity: 0.45 });
+    const sideTex = HD.makeConcreteAlbedo(r);
+    sideTex.repeat.set(3, 0.07);
+    const sideMat = new THREE.MeshStandardMaterial({ map: sideTex, color: 0xa9a59c, roughness: 0.95, envMapIntensity: 0.45 });
+    const depth = PAD_H + 0.1; // slab goes 10 cm into the ground
+    const slab = new THREE.Mesh(new THREE.BoxGeometry(size, depth, size), [sideMat, sideMat, topMat, sideMat, sideMat, sideMat]);
+    slab.position.set(0, TOWN_H + PAD_H - depth / 2, 0);
+    slab.castShadow = true;
+    slab.receiveShadow = true;
+    this.scene.add(slab);
+
+    // Green perimeter lights (inset lights on the slab edge)
+    const e = PAD_HALF - 0.2;
+    const pts = [];
+    for (let i = 0; i <= 4; i++) {
+      const t = -e + (i / 4) * 2 * e;
+      pts.push([t, -e], [t, e]);
+      if (i > 0 && i < 4) pts.push([-e, t], [e, t]);
+    }
+    const baseGeo = new THREE.CylinderGeometry(0.075, 0.085, 0.04, 14).translate(0, 0.02, 0);
+    const domeGeo = new THREE.SphereGeometry(0.055, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2).translate(0, 0.035, 0);
+    const baseMat = new THREE.MeshStandardMaterial({ color: 0x2a2c2e, roughness: 0.4, metalness: 0.7 });
+    this.padLightMat = new THREE.MeshStandardMaterial({ color: 0x1f6e34, emissive: 0x2bff6a, emissiveIntensity: 0.3, roughness: 0.15 });
+    const bases = new THREE.InstancedMesh(baseGeo, baseMat, pts.length);
+    const domes = new THREE.InstancedMesh(domeGeo, this.padLightMat, pts.length);
+    const m = new THREE.Matrix4();
+    pts.forEach(([x, z], i) => {
+      m.makeTranslation(x, TOWN_H + PAD_H, z);
+      bases.setMatrixAt(i, m);
+      domes.setMatrixAt(i, m);
+    });
+    bases.computeBoundingSphere(); domes.computeBoundingSphere();
+    this.scene.add(bases, domes);
+
+    // Windsock: points downwind, hangs limp in calm air
+    const [wx, wz] = WINDSOCK_POS;
+    const ws = new THREE.Group();
+    ws.position.set(wx, TOWN_H, wz);
+    const metal = new THREE.MeshStandardMaterial({ color: 0xc9c9c4, roughness: 0.45, metalness: 0.6 });
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.06, 4.2, 12).translate(0, 2.1, 0), metal);
+    const plate = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.08, 0.5).translate(0, 0.04, 0), new THREE.MeshStandardMaterial({ color: 0x77736b, roughness: 0.9 }));
+    const pivot = new THREE.Group();
+    pivot.position.y = 4.15;
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.014, 8, 28).rotateY(Math.PI / 2), metal);
+    const sockGeo = new THREE.CylinderGeometry(0.11, 0.3, 2.4, 24, 6, true).rotateZ(-Math.PI / 2).translate(1.2, 0, 0);
+    const sock = new THREE.Mesh(sockGeo, new THREE.MeshStandardMaterial({
+      map: HD.makeWindsockTexture(r), roughness: 0.8, side: THREE.DoubleSide,
+    }));
+    pivot.add(ring, sock);
+    ws.add(pole, plate, pivot);
+    ws.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+    this.scene.add(ws);
+    this.windsock = { pivot, sock, yaw: 0 };
+    this.addTreeCollider({ x: wx, z: wz, y: TOWN_H, trunkR: 0.1, crownR: 0.1, crownY0: TOWN_H + 4.6, top: TOWN_H + 4.6 });
+  }
+
+  updateWindsock(dt, wind, time) {
+    const ws = this.windsock;
+    if (!ws) return;
+    const sp = Math.hypot(wind.x, wind.z);
+    if (sp > 0.05) {
+      let d = Math.atan2(-wind.z, wind.x) - ws.yaw;
+      while (d > Math.PI) d -= Math.PI * 2;
+      while (d < -Math.PI) d += Math.PI * 2;
+      ws.yaw += d * Math.min(1, dt * 1.5);
+    }
+    const lift = Math.min(1, sp / 7.5); // fully extended at ~15 knots
+    ws.pivot.rotation.y = ws.yaw + Math.sin(time * 1.7) * 0.06 * lift;
+    ws.sock.rotation.z = -(1 - lift) * 1.25 + Math.sin(time * 3.3) * 0.05 * lift;
+  }
+
+  // ---------- rooftops ----------
+  buildRooftops(lots) {
+    const rand = mulberry32(31337);
+    const L = { parapet: [], housing: [], door: [], tank: [], ac: [], fan: [], solar: [], mast: [], dish: [], hvac: [] };
+    const tankCols = [0x1c1d20, 0x1d4c9a, 0xe9e7e1, 0x1c1d20];
+    const item = (x, y, z, sx, sy, sz, ry = 0, rx = 0, color = null) => ({ x, y, z, sx, sy, sz, ry, rx, color });
+    for (const l of lots) {
+      const top = TOWN_H + l.h;
+      const t = 0.25, ph = l.h > 40 ? 1.2 : 1.0;
+      L.parapet.push(
+        item(l.x, top, l.z - l.d / 2 + t / 2, l.w, ph, t, 0, 0, l.color),
+        item(l.x, top, l.z + l.d / 2 - t / 2, l.w, ph, t, 0, 0, l.color),
+        item(l.x - l.w / 2 + t / 2, top, l.z, t, ph, l.d - 2 * t, 0, 0, l.color),
+        item(l.x + l.w / 2 - t / 2, top, l.z, t, ph, l.d - 2 * t, 0, 0, l.color),
+      );
+      const used = [];
+      const place = (w, d, margin = 1.0) => {
+        for (let a = 0; a < 14; a++) {
+          const x = l.x + (rand() - 0.5) * Math.max(0, l.w - w - 2 * margin);
+          const z = l.z + (rand() - 0.5) * Math.max(0, l.d - d - 2 * margin);
+          if (!used.some((u) => Math.abs(u.x - x) < (u.w + w) / 2 + 0.5 && Math.abs(u.z - z) < (u.d + d) / 2 + 0.5)) {
+            used.push({ x, z, w, d });
+            return { x, z };
+          }
+        }
+        return null;
+      };
+      // Stair / lift housing with water tanks on its roof
+      if (l.w > 9 && l.d > 9) {
+        const hw = 3.2, hd = 4.0, hh = 2.9;
+        const p = place(hw, hd + 1.2, 1.4);
+        if (p) {
+          L.housing.push(item(p.x, top, p.z, hw, hh, hd, 0, 0, l.color));
+          L.door.push(item(p.x, top, p.z + hd / 2 + 0.02, 1.0, 2.1, 0.06));
+          const nt = 1 + Math.floor(rand() * 2);
+          const tc = new THREE.Color().setHex(tankCols[Math.floor(rand() * tankCols.length)], THREE.SRGBColorSpace);
+          for (let i = 0; i < nt; i++) L.tank.push(item(p.x + (nt === 2 ? (i - 0.5) * 1.45 : 0), top + hh, p.z, 1, 1, 1, 0, 0, tc));
+          this.buildings.push({ minX: p.x - hw / 2, maxX: p.x + hw / 2, minZ: p.z - hd / 2, maxZ: p.z + hd / 2, minY: top, maxY: top + hh + 1.4 });
+        }
+      }
+      if (l.h > 35) {
+        const p = place(3.6, 2.4, 1.6);
+        if (p) {
+          L.hvac.push(item(p.x, top, p.z, 3.6, 1.7, 2.4));
+          this.buildings.push({ minX: p.x - 1.8, maxX: p.x + 1.8, minZ: p.z - 1.2, maxZ: p.z + 1.2, minY: top, maxY: top + 1.7 });
+        }
+      }
+      // AC condensers
+      const nac = 2 + Math.floor(rand() * 5);
+      for (let i = 0; i < nac; i++) {
+        const p = place(0.95, 0.45, 0.8);
+        if (!p) break;
+        const ry = rand() < 0.5 ? 0 : Math.PI / 2;
+        L.ac.push(item(p.x, top, p.z, 0.9, 0.68, 0.38, ry));
+        L.fan.push(item(p.x, top + 0.685, p.z, 1, 1, 1, ry));
+      }
+      // Solar panels on about a quarter of the roofs, tilted toward the south (+z)
+      if (l.roofType > 0.72 && rand() < 0.6 && l.w > 12 && l.d > 12) {
+        const n = 4 + Math.floor(rand() * 8);
+        for (let i = 0; i < n; i++) {
+          const p = place(1.1, 1.75, 1.2);
+          if (!p) break;
+          L.solar.push(item(p.x, top + 0.45, p.z, 1.05, 0.04, 1.7, 0, -0.38));
+        }
+      }
+      if (rand() < 0.45) {
+        const p = place(0.5, 0.5, 0.8);
+        if (p) {
+          const mh = 3 + rand() * 4;
+          L.mast.push(item(p.x, top, p.z, 1, mh, 1));
+          this.addTreeCollider({ x: p.x, z: p.z, y: top, trunkR: 0.08, crownR: 0.08, crownY0: top + mh, top: top + mh });
+        }
+      }
+      if (rand() < 0.35) {
+        const p = place(1.0, 1.0, 0.8);
+        if (p) L.dish.push(item(p.x, top, p.z, 1, 1, 1, rand() * 0.8 - 0.4));
+      }
+    }
+
+    const unitBox = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
+    const centeredBox = new THREE.BoxGeometry(1, 1, 1);
+    const wallMat = new THREE.MeshStandardMaterial({ color: 0xd8d6d0, roughness: 0.88 });
+    const specs = {
+      parapet: [unitBox, wallMat],
+      housing: [unitBox, wallMat],
+      door: [unitBox, new THREE.MeshStandardMaterial({ color: 0x3b3d40, roughness: 0.5, metalness: 0.5 })],
+      tank: [new THREE.CylinderGeometry(0.62, 0.62, 1.35, 22).translate(0, 0.675, 0), new THREE.MeshStandardMaterial({ roughness: 0.45 })],
+      ac: [unitBox, new THREE.MeshStandardMaterial({ color: 0xd9d9d3, roughness: 0.45, metalness: 0.3 })],
+      fan: [new THREE.CylinderGeometry(0.17, 0.17, 0.01, 16), new THREE.MeshStandardMaterial({ color: 0x1d1e20, roughness: 0.6 })],
+      solar: [centeredBox, new THREE.MeshStandardMaterial({ color: 0x14213d, roughness: 0.18, metalness: 0.75 })],
+      mast: [new THREE.CylinderGeometry(0.03, 0.05, 1, 6).translate(0, 0.5, 0), new THREE.MeshStandardMaterial({ color: 0x8c8f93, roughness: 0.35, metalness: 0.9 })],
+      dish: [mergeGeometries([
+        new THREE.CylinderGeometry(0.03, 0.04, 0.9, 6).translate(0, 0.45, 0),
+        new THREE.SphereGeometry(0.42, 18, 8, 0, Math.PI * 2, 0, 0.85).rotateX(-2.15).translate(0, 1.05, 0),
+      ]), new THREE.MeshStandardMaterial({ color: 0xe6e6e2, roughness: 0.5, side: THREE.DoubleSide })],
+      hvac: [unitBox, new THREE.MeshStandardMaterial({ color: 0xa3a7aa, roughness: 0.35, metalness: 0.6 })],
+    };
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), sc = new THREE.Vector3();
+    const e = new THREE.Euler(0, 0, 0, 'YXZ');
+    for (const [key, list] of Object.entries(L)) {
+      if (!list.length) continue;
+      const [geo, mat] = specs[key];
+      const im = new THREE.InstancedMesh(geo, mat, list.length);
+      list.forEach((it, i) => {
+        q.setFromEuler(e.set(it.rx, it.ry, 0, 'YXZ'));
+        m.compose(p.set(it.x, it.y, it.z), q, sc.set(it.sx, it.sy, it.sz));
+        im.setMatrixAt(i, m);
+        if (it.color) im.setColorAt(i, it.color.clone().multiplyScalar(key === 'parapet' ? 0.92 : 1));
+      });
+      im.castShadow = key !== 'fan';
+      im.receiveShadow = true;
+      im.computeBoundingSphere();
+      this.scene.add(im);
+    }
   }
 
   // ---------- parked cars and street lamps ----------
@@ -828,6 +1059,102 @@ export class World {
     return (Math.floor(x / 16) + 1000) * 4000 + (Math.floor(z / 16) + 1000);
   }
 
+  /**
+   * Town ground feature mask, drawn in world coordinates with canvas 2D:
+   * R = gravel paths, G = worn soil, B = concrete aprons. Sampled by the terrain shader.
+   */
+  buildGroundMask() {
+    const S = 1024, H = TOWN_MASK_HALF, k = S / (2 * H);
+    const rand = mulberry32(2024);
+    const layer = () => {
+      const c = document.createElement('canvas');
+      c.width = c.height = S;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#000'; ctx.fillRect(0, 0, S, S);
+      ctx.setTransform(k, 0, 0, k, H * k, H * k); // world metres -> pixels
+      ctx.fillStyle = '#fff'; ctx.strokeStyle = '#fff'; ctx.lineCap = 'round';
+      return { c, ctx };
+    };
+
+    // R: gravel footpaths in parks
+    const P = layer();
+    for (const pb of this.parkBlocks) {
+      const cx = (pb.x0 + pb.x1) / 2, cz = (pb.z0 + pb.z1) / 2;
+      P.ctx.lineWidth = 2.4;
+      if (pb.central) {
+        P.ctx.beginPath(); P.ctx.arc(0, 0, 40, 0, Math.PI * 2); P.ctx.stroke();
+        for (const [dx, dz] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+          P.ctx.beginPath(); P.ctx.moveTo(dx * 8.5, dz * 8.5); P.ctx.lineTo(dx * (pb.x1 + 2), dz * (pb.z1 + 2)); P.ctx.stroke();
+        }
+      } else {
+        P.ctx.beginPath(); P.ctx.moveTo(pb.x0, pb.z0); P.ctx.lineTo(pb.x1, pb.z1);
+        P.ctx.moveTo(pb.x1, pb.z0); P.ctx.lineTo(pb.x0, pb.z1); P.ctx.stroke();
+        P.ctx.beginPath(); P.ctx.arc(cx, cz, 5, 0, Math.PI * 2); P.ctx.stroke();
+      }
+    }
+
+    // G: worn soil - patches, road verges, around gate posts
+    const D = layer();
+    for (let i = 0; i < 320; i++) {
+      const x = (rand() - 0.5) * 2 * (TOWN_EDGE + 10), z = (rand() - 0.5) * 2 * (TOWN_EDGE + 10);
+      const r = 1.5 + rand() * 5.5;
+      const g = D.ctx.createRadialGradient(x, z, 0, x, z, r);
+      g.addColorStop(0, `rgba(255,255,255,${0.35 + rand() * 0.4})`); g.addColorStop(1, 'rgba(255,255,255,0)');
+      D.ctx.fillStyle = g;
+      D.ctx.fillRect(x - r, z - r, r * 2, r * 2);
+    }
+    D.ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    for (const r of ROADS) {
+      for (const sgn of [-1, 1]) {
+        const o = r + sgn * (ROAD_HALF + 0.6);
+        D.ctx.fillRect(-TOWN_EDGE - 6, o - 0.7, TOWN_EDGE * 2 + 12, 1.4);
+        D.ctx.fillRect(o - 0.7, -TOWN_EDGE - 6, 1.4, TOWN_EDGE * 2 + 12);
+      }
+    }
+    D.ctx.fillStyle = 'rgba(255,255,255,0.8)';
+    for (const g of this.gates) {
+      for (const sx of [-1, 1]) {
+        const px = g.center.x + sx * (g.inner / 2 + g.bar / 2) * g.cos;
+        const pz = g.center.z - sx * (g.inner / 2 + g.bar / 2) * g.sin;
+        D.ctx.beginPath(); D.ctx.arc(px, pz, 0.9, 0, Math.PI * 2); D.ctx.fill();
+      }
+    }
+
+    // B: concrete aprons around buildings, helipad and pilot stand
+    const C = layer();
+    for (const l of this.lots) C.ctx.fillRect(l.x - l.w / 2 - 2.5, l.z - l.d / 2 - 2.5, l.w + 5, l.d + 5);
+    C.ctx.fillRect(-9.5, -9.5, 19, 19);
+    C.ctx.fillRect(-1.8, 9.2, 3.6, 3.6);
+
+    // Soften edges and pack into one RGB texture
+    const out = document.createElement('canvas');
+    out.width = out.height = S;
+    const octx = out.getContext('2d');
+    const read = (L, blur) => {
+      octx.filter = `blur(${blur}px)`;
+      octx.clearRect(0, 0, S, S);
+      octx.drawImage(L.c, 0, 0);
+      return octx.getImageData(0, 0, S, S).data;
+    };
+    const pr = read(P, 1.2), pg = read(D, 2), pb = read(C, 0.8);
+    octx.filter = 'none';
+    const img = octx.createImageData(S, S);
+    for (let i = 0; i < S * S; i++) {
+      img.data[i * 4] = pr[i * 4];
+      img.data[i * 4 + 1] = pg[i * 4];
+      img.data[i * 4 + 2] = pb[i * 4];
+      img.data[i * 4 + 3] = 255;
+    }
+    octx.putImageData(img, 0, 0);
+    const tex = new THREE.CanvasTexture(out);
+    tex.flipY = false;
+    tex.colorSpace = THREE.NoColorSpace;
+    tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+    this.terrainUniforms.tGround.value = tex;
+    this.groundMask = { data: img.data, size: S };
+  }
+
   /** Grass density mask over the whole map (R8, size x size). */
   buildGrassMask(size = 1024) {
     const data = new Uint8Array(size * size);
@@ -841,8 +1168,20 @@ export class World {
         let d = this.grassGrid[gz * N + gx];
         if (Math.max(Math.abs(wx), Math.abs(z)) < TOWN_EDGE + ROAD_HALF + 1) {
           if (ROADS.some((r) => Math.abs(z - r) < ROAD_HALF + 0.6 || Math.abs(wx - r) < ROAD_HALF + 0.6)) d = 0;
-          if (Math.abs(wx) < 6 && Math.abs(z) < 6) d = 0;
+          if (Math.abs(wx) < 10 && Math.abs(z) < 10) d = 0;
+          // no tall grass on paths, worn soil or concrete
+          const gm = this.groundMask;
+          if (gm) {
+            const mx = Math.floor(((wx + TOWN_MASK_HALF) / (TOWN_MASK_HALF * 2)) * gm.size);
+            const mz = Math.floor(((z + TOWN_MASK_HALF) / (TOWN_MASK_HALF * 2)) * gm.size);
+            if (mx >= 0 && mz >= 0 && mx < gm.size && mz < gm.size) {
+              const gi = (mz * gm.size + mx) * 4;
+              d *= 1 - Math.min(1, Math.max(gm.data[gi], gm.data[gi + 1], gm.data[gi + 2]) / 160);
+            }
+          }
         }
+        // sparse, clumpy tufts instead of a continuous carpet
+        d *= smoothstep(0.05, 0.55, nG(wx * 0.06, z * 0.06) * 0.6 + nG(wx * 0.23 + 40, z * 0.23) * 0.4) * 0.7;
         data[y * size + x] = Math.max(0, Math.min(255, d * 255));
       }
     }

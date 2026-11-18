@@ -66,49 +66,104 @@
       </div>
     </div>
 
-    <div id="start" class="overlay hidden">
-      <div class="card wide">
-        <h1>Drone Simulator</h1>
-        <p class="sub">Realistic quadcopter physics, three flight modes, six camera views, keyboard or joystick control.</p>
-        <div class="cols">
-          <div>
-            <h3>Keyboard (Mode 2)</h3>
-            <table class="keys">
-              <tr><td><kbd>W</kbd>/<kbd>S</kbd></td><td>Throttle up / down</td></tr>
-              <tr><td><kbd>A</kbd>/<kbd>D</kbd></td><td>Yaw left / right</td></tr>
-              <tr><td><kbd>&uarr;</kbd>/<kbd>&darr;</kbd></td><td>Pitch forward / back</td></tr>
-              <tr><td><kbd>&larr;</kbd>/<kbd>&rarr;</kbd></td><td>Roll left / right</td></tr>
-              <tr><td><kbd>Shift</kbd></td><td>Full stick deflection</td></tr>
-              <tr><td><kbd>Space</kbd></td><td>Arm / disarm motors</td></tr>
-            </table>
+    <div id="start" class="start-screen hidden">
+      <div class="start-shade"></div>
+
+      <section class="start-main">
+        <div class="eyebrow"><span class="live-dot"></span>Quadcopter flight simulator</div>
+        <h1 class="title">Drone<span>Simulator</span></h1>
+        <p class="tagline">Real rotor physics, wind and battery drain. Film the town with a heavy camera drone, or rip through the gates on a 5&Prime; FPV racer.</p>
+
+        <div class="pick-label">Drone</div>
+        <div class="drone-pick" id="pick-drone">
+          <button class="pick" data-profile="camera">
+            <span class="pick-name">Pro camera drone</span>
+            <span class="pick-spec">3.2 kg &middot; 16&Prime; props &middot; stabilised gimbal</span>
+          </button>
+          <button class="pick" data-profile="racer">
+            <span class="pick-name">FPV racer 5&Prime;</span>
+            <span class="pick-spec">650 g &middot; 7:1 thrust-to-weight</span>
+          </button>
+        </div>
+
+        <div class="pick-label">Flight mode</div>
+        <div class="seg" id="pick-mode">
+          <button data-mode="GPS">GPS</button>
+          <button data-mode="ANGLE">Angle</button>
+          <button data-mode="ACRO">Acro</button>
+        </div>
+        <p class="mode-desc" id="mode-desc"></p>
+
+        <div class="start-actions">
+          <button id="start-btn" class="btn primary big">Start flying</button>
+          <button id="start-settings" class="btn ghost">Settings</button>
+          <span class="enter-hint"><kbd>Enter</kbd> to start</span>
+        </div>
+      </section>
+
+      <aside class="start-controls">
+        <div class="ctl-head">
+          <span>Controls</span>
+          <span id="pad-status" class="pad-chip">Keyboard</span>
+        </div>
+        <div class="sticks-row">
+          <div class="stick-diagram">
+            <div class="ring">
+              <div class="nub"></div>
+              <kbd class="k up">W</kbd><kbd class="k down">S</kbd><kbd class="k left">A</kbd><kbd class="k right">D</kbd>
+            </div>
+            <div class="stick-cap">Left stick<small>Throttle &middot; Yaw</small></div>
           </div>
-          <div>
-            <h3>Functions</h3>
-            <table class="keys">
-              <tr><td><kbd>C</kbd> / <kbd>1</kbd>-<kbd>6</kbd></td><td>Change camera view</td></tr>
-              <tr><td><kbd>V</kbd></td><td>Picture-in-picture</td></tr>
-              <tr><td><kbd>M</kbd></td><td>Flight mode GPS / Angle / Acro</td></tr>
-              <tr><td><kbd>X</kbd></td><td>Return to home (GPS)</td></tr>
-              <tr><td><kbd>Q</kbd>/<kbd>E</kbd></td><td>Camera tilt</td></tr>
-              <tr><td><kbd>R</kbd> &middot; <kbd>G</kbd></td><td>Reset drone &middot; Reset race</td></tr>
-              <tr><td><kbd>H</kbd> &middot; <kbd>Esc</kbd></td><td>Help &middot; Settings</td></tr>
-            </table>
+          <div class="stick-diagram">
+            <div class="ring">
+              <div class="nub"></div>
+              <kbd class="k up">&uarr;</kbd><kbd class="k down">&darr;</kbd><kbd class="k left">&larr;</kbd><kbd class="k right">&rarr;</kbd>
+            </div>
+            <div class="stick-cap">Right stick<small>Pitch &middot; Roll</small></div>
           </div>
         </div>
-        <p class="note">Joystick / gamepad / USB RC transmitter: connect it and move a stick. Remap axes in <b>Settings &rarr; Controls</b>.
-          Start in <b>GPS mode</b>: arm with Space, hold W to take off. Fly through the 8 orange gates around the helipad.</p>
-        <button id="start-btn" class="btn primary">Start flying</button>
-      </div>
+        <div class="fn-grid">
+          <div><kbd>Space</kbd><span>Arm / disarm</span></div>
+          <div><kbd>Shift</kbd><span>Full stick</span></div>
+          <div><kbd>C</kbd><span>Camera view</span></div>
+          <div><kbd>V</kbd><span>Picture-in-picture</span></div>
+          <div><kbd>M</kbd><span>Flight mode</span></div>
+          <div><kbd>X</kbd><span>Return home</span></div>
+          <div><kbd>Q</kbd><kbd>E</kbd><span>Camera tilt</span></div>
+          <div><kbd>R</kbd><span>Reset drone</span></div>
+          <div><kbd>H</kbd><span>This screen</span></div>
+          <div><kbd>Esc</kbd><span>Settings</span></div>
+        </div>
+        <p class="ctl-note">Gamepad or USB RC transmitter: plug it in and move a stick. Remap in Settings &rarr; Controls.</p>
+      </aside>
     </div>
 
-    <div id="menu" class="overlay hidden">
-      <div class="card menu-card">
-        <div class="menu-head">
-          <h2>Settings</h2>
-          <div class="tabs" id="tabs"></div>
-          <button class="btn" id="menu-close">Resume (Esc)</button>
-        </div>
-        <div id="menu-body"></div>
+    <div id="menu" class="overlay settings-overlay hidden">
+      <div class="settings" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+        <aside class="settings-nav">
+          <div class="settings-brand">
+            <h2 id="settings-title">Settings</h2>
+            <span><i class="saved-dot"></i>Changes save automatically</span>
+          </div>
+          <nav class="s-tabs" id="tabs" role="tablist" aria-orientation="vertical"></nav>
+          <div class="settings-nav-foot"><kbd>Esc</kbd> to resume</div>
+        </aside>
+        <section class="settings-main">
+          <header class="settings-head">
+            <div>
+              <h3 id="tab-title"></h3>
+              <p id="tab-desc"></p>
+            </div>
+            <button type="button" class="icon-btn" id="menu-x" aria-label="Close settings">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+            </button>
+          </header>
+          <div id="menu-body" role="tabpanel"></div>
+          <footer class="settings-foot">
+            <button type="button" class="btn ghost reset-tab" id="menu-reset"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v4h4"/></svg><span>Reset tab</span></button>
+            <button type="button" class="btn primary" id="menu-close">Resume flight</button>
+          </footer>
+        </section>
       </div>
     </div>
   </div>

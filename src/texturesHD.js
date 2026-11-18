@@ -53,26 +53,43 @@ export function makeGrassAlbedo(renderer) {
   const n1 = tileableNoise(S, 4, 5, 101);
   const n2 = tileableNoise(S, 24, 3, 102);
   const rand = mulberry32(103);
+  const n3 = tileableNoise(S, 10, 3, 104);
+  // Muted, natural turf: olive greens with soil showing through between tufts
   const { c, ctx } = pixels(S, (i) => {
-    const base = mixc([46, 66, 24], [92, 106, 42], n1[i]);
-    const v = 0.8 + n2[i] * 0.35 + (rand() - 0.5) * 0.12;
+    let base = mixc([58, 64, 34], [92, 94, 50], n1[i]);
+    base = mixc(base, [96, 82, 58], Math.max(0, n3[i] - 0.55) * 1.4); // soil showing through
+    const v = 0.78 + n2[i] * 0.34 + (rand() - 0.5) * 0.14;
     return [base[0] * v, base[1] * v, base[2] * v];
   });
   ctx.lineCap = 'round';
-  for (let k = 0; k < 14000; k++) {
+  for (let k = 0; k < 11000; k++) {
     const x = rand() * S, y = rand() * S;
-    const len = 4 + rand() * 9;
-    const a = -Math.PI / 2 + (rand() - 0.5) * 1.2;
-    const l = 14 + rand() * 26, h = 70 + rand() * 30, s = 35 + rand() * 30;
-    ctx.strokeStyle = `hsla(${h},${s}%,${l}%,0.75)`;
-    ctx.lineWidth = 0.8 + rand() * 1.1;
-    wrapped(S, x, y, 14, (px, py) => {
+    const len = 3 + rand() * 7;
+    const a = -Math.PI / 2 + (rand() - 0.5) * 1.6;
+    const dry = rand() < 0.22;
+    const l = dry ? 34 + rand() * 18 : 13 + rand() * 22;
+    const h = dry ? 42 + rand() * 14 : 62 + rand() * 30;
+    const s = dry ? 28 + rand() * 16 : 20 + rand() * 26;
+    ctx.strokeStyle = `hsla(${h},${s}%,${l}%,0.7)`;
+    ctx.lineWidth = 0.7 + rand() * 1.0;
+    wrapped(S, x, y, 12, (px, py) => {
       ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px + Math.cos(a) * len, py + Math.sin(a) * len); ctx.stroke();
     });
   }
-  for (let k = 0; k < 1500; k++) {
+  // clover / weed leaves
+  for (let k = 0; k < 500; k++) {
+    const x = rand() * S, y = rand() * S, r = 1.2 + rand() * 1.6;
+    ctx.fillStyle = `hsla(${95 + rand() * 20},${30 + rand() * 15}%,${22 + rand() * 10}%,0.8)`;
+    wrapped(S, x, y, 5, (px, py) => {
+      for (let j = 0; j < 3; j++) {
+        const a = j * 2.1 + rand();
+        ctx.beginPath(); ctx.arc(px + Math.cos(a) * r, py + Math.sin(a) * r, r, 0, Math.PI * 2); ctx.fill();
+      }
+    });
+  }
+  for (let k = 0; k < 2200; k++) {
     const x = rand() * S, y = rand() * S;
-    ctx.fillStyle = rand() < 0.5 ? 'rgba(150,135,80,0.55)' : 'rgba(60,45,30,0.5)';
+    ctx.fillStyle = rand() < 0.5 ? 'rgba(140,124,92,0.6)' : 'rgba(58,44,30,0.55)';
     wrapped(S, x, y, 3, (px, py) => ctx.fillRect(px, py, 1.5, 1.5));
   }
   return finish(new THREE.CanvasTexture(c), renderer, true);
@@ -143,6 +160,175 @@ export function makeSnowAlbedo(renderer) {
     return [232 * v, 238 * v, 248 * v];
   });
   return finish(new THREE.CanvasTexture(c), renderer, true);
+}
+
+/** Compacted gravel path: dense small stones over packed dust. */
+export function makeGravelAlbedo(renderer) {
+  const S = 512;
+  const n1 = tileableNoise(S, 8, 4, 181);
+  const rand = mulberry32(182);
+  const { c, ctx } = pixels(S, (i) => {
+    const base = mixc([92, 84, 70], [120, 110, 94], n1[i]);
+    const v = 0.9 + (rand() - 0.5) * 0.18;
+    return [base[0] * v, base[1] * v, base[2] * v];
+  });
+  for (let k = 0; k < 5200; k++) {
+    const x = rand() * S, y = rand() * S, r = 1.2 + rand() * 3.2;
+    const g = 78 + rand() * 80;
+    const tint = rand();
+    const rot = rand() * Math.PI;
+    wrapped(S, x, y, 6, (px, py) => {
+      ctx.fillStyle = 'rgba(35,30,25,0.4)';
+      ctx.beginPath(); ctx.ellipse(px + 0.9, py + 1.1, r, r * 0.7, rot, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = `rgb(${g + tint * 18},${g + tint * 8},${g - 6})`;
+      ctx.beginPath(); ctx.ellipse(px, py, r, r * 0.7, rot, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.18)';
+      ctx.beginPath(); ctx.ellipse(px - r * 0.3, py - r * 0.3, r * 0.4, r * 0.28, rot, 0, Math.PI * 2); ctx.fill();
+    });
+  }
+  return finish(new THREE.CanvasTexture(c), renderer, true);
+}
+
+/** Weathered concrete slabs (4 m tile with expansion joints). */
+export function makeConcreteAlbedo(renderer) {
+  const S = 512;
+  const n1 = tileableNoise(S, 4, 5, 191);
+  const n2 = tileableNoise(S, 48, 2, 192);
+  const rand = mulberry32(193);
+  const { c, ctx } = pixels(S, (i) => {
+    const v = 0.82 + n1[i] * 0.18 + n2[i] * 0.08 + (rand() - 0.5) * 0.06;
+    return [128 * v, 125 * v, 119 * v];
+  });
+  // stains
+  for (let k = 0; k < 40; k++) {
+    const x = rand() * S, y = rand() * S, r = 8 + rand() * 30;
+    wrapped(S, x, y, r, (px, py) => {
+      const g = ctx.createRadialGradient(px, py, 0, px, py, r);
+      g.addColorStop(0, 'rgba(60,55,48,0.18)'); g.addColorStop(1, 'rgba(60,55,48,0)');
+      ctx.fillStyle = g; ctx.fillRect(px - r, py - r, r * 2, r * 2);
+    });
+  }
+  // expansion joints every half tile (2 m)
+  ctx.fillStyle = 'rgba(40,38,34,0.55)';
+  for (const p of [0, S / 2]) { ctx.fillRect(p, 0, 2, S); ctx.fillRect(0, p, S, 2); }
+  // hairline cracks
+  ctx.strokeStyle = 'rgba(45,42,38,0.45)';
+  ctx.lineWidth = 0.8;
+  for (let k = 0; k < 14; k++) {
+    let x = rand() * S, y = rand() * S;
+    ctx.beginPath(); ctx.moveTo(x, y);
+    for (let j = 0; j < 8; j++) { x += (rand() - 0.5) * 24; y += (rand() - 0.5) * 24; ctx.lineTo(x, y); }
+    ctx.stroke();
+  }
+  return finish(new THREE.CanvasTexture(c), renderer, true);
+}
+
+/**
+ * Helipad top surface (12 m x 12 m): weathered concrete slabs with worn paint markings,
+ * skid scuffs and oil stains.
+ */
+export function makeHelipadTop(renderer, sizeM = 12) {
+  const S = 1024;
+  const m = S / sizeM; // pixels per metre
+  const n1 = tileableNoise(S, 6, 5, 201);
+  const n2 = tileableNoise(S, 64, 2, 202);
+  const rand = mulberry32(203);
+  const { c, ctx } = pixels(S, (i) => {
+    const v = 0.8 + n1[i] * 0.2 + n2[i] * 0.07 + (rand() - 0.5) * 0.07;
+    return [118 * v, 116 * v, 111 * v];
+  });
+  // slab joints every 3 m
+  ctx.fillStyle = 'rgba(38,36,33,0.6)';
+  for (let k = 1; k < sizeM / 3; k++) { ctx.fillRect(k * 3 * m - 1, 0, 2, S); ctx.fillRect(0, k * 3 * m - 1, S, 2); }
+  // edge darkening (weathering at the slab rim)
+  const eg = ctx.createRadialGradient(S / 2, S / 2, S * 0.3, S / 2, S / 2, S * 0.75);
+  eg.addColorStop(0, 'rgba(0,0,0,0)'); eg.addColorStop(1, 'rgba(30,26,20,0.28)');
+  ctx.fillStyle = eg; ctx.fillRect(0, 0, S, S);
+  // oil / water stains
+  for (let k = 0; k < 14; k++) {
+    const x = S / 2 + (rand() - 0.5) * S * 0.7, y = S / 2 + (rand() - 0.5) * S * 0.7, r = (0.2 + rand() * 0.9) * m;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, 'rgba(25,22,18,0.28)'); g.addColorStop(1, 'rgba(25,22,18,0)');
+    ctx.fillStyle = g; ctx.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+
+  // Paint layer
+  const paint = document.createElement('canvas');
+  paint.width = paint.height = S;
+  const p = paint.getContext('2d');
+  const inset = 0.35 * m;
+  p.strokeStyle = '#d9ad1f'; p.lineWidth = 0.28 * m;
+  p.strokeRect(inset, inset, S - inset * 2, S - inset * 2);
+  p.strokeStyle = '#ecebe6'; p.lineWidth = 0.32 * m;
+  p.beginPath(); p.arc(S / 2, S / 2, 4.4 * m, 0, Math.PI * 2); p.stroke();
+  p.fillStyle = '#ecebe6';
+  const hw = 2.2 * m, hh = 3.4 * m, bar = 0.55 * m;
+  p.fillRect(S / 2 - hw / 2, S / 2 - hh / 2, bar, hh);
+  p.fillRect(S / 2 + hw / 2 - bar, S / 2 - hh / 2, bar, hh);
+  p.fillRect(S / 2 - hw / 2, S / 2 - bar / 2, hw, bar);
+  // corner touchdown marks
+  p.fillStyle = '#d9ad1f';
+  for (const [sx, sy] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+    p.fillRect(S / 2 + sx * 3.9 * m - 0.6 * m * (sx < 0 ? 1 : 0), S / 2 + sy * 3.9 * m - 0.12 * m, 0.6 * m, 0.24 * m);
+  }
+  // wear: chip the paint away
+  p.globalCompositeOperation = 'destination-out';
+  for (let k = 0; k < 16000; k++) {
+    const x = rand() * S, y = rand() * S;
+    const centre = 1 - Math.min(1, Math.hypot(x - S / 2, y - S / 2) / (S * 0.5));
+    const wear = n1[(y | 0) * S + (x | 0)];
+    if (rand() > 0.35 + wear * 0.5 + centre * 0.3) continue;
+    p.fillStyle = `rgba(0,0,0,${0.25 + rand() * 0.6})`;
+    p.beginPath(); p.arc(x, y, 0.6 + rand() * 2.6, 0, Math.PI * 2); p.fill();
+  }
+  ctx.globalAlpha = 0.92;
+  ctx.drawImage(paint, 0, 0);
+  ctx.globalAlpha = 1;
+  // skid scuffs across paint and concrete
+  ctx.lineCap = 'round';
+  for (let k = 0; k < 22; k++) {
+    const r = (0.6 + rand() * 3.2) * m, a = rand() * Math.PI * 2;
+    ctx.strokeStyle = `rgba(20,20,20,${0.06 + rand() * 0.12})`;
+    ctx.lineWidth = (0.04 + rand() * 0.08) * m;
+    ctx.beginPath(); ctx.arc(S / 2 + (rand() - 0.5) * m, S / 2 + (rand() - 0.5) * m, r, a, a + 0.3 + rand() * 0.8); ctx.stroke();
+  }
+  return finish(new THREE.CanvasTexture(c), renderer, true, false);
+}
+
+/** Flat-roof concrete tiles (4 m tile, 0.5 m pavers) with grout, stains and damp streaks. */
+export function makeRoofTiles(renderer) {
+  const S = 512, cell = 64;
+  const n1 = tileableNoise(S, 4, 5, 211);
+  const rand = mulberry32(212);
+  const tile = [];
+  for (let i = 0; i < 64; i++) tile.push(0.85 + rand() * 0.25);
+  const { c, ctx } = pixels(S, (i, x, y) => {
+    const t = tile[((y / cell) | 0) * 8 + ((x / cell) | 0)];
+    const v = t * (0.82 + n1[i] * 0.22) + (rand() - 0.5) * 0.05;
+    return [124 * v, 115 * v, 104 * v];
+  });
+  ctx.fillStyle = 'rgba(55,50,44,0.7)';
+  for (let k = 0; k <= S; k += cell) { ctx.fillRect(k - 1, 0, 2, S); ctx.fillRect(0, k - 1, S, 2); }
+  for (let k = 0; k < 30; k++) {
+    const x = rand() * S, y = rand() * S, r = 10 + rand() * 50;
+    wrapped(S, x, y, r, (px, py) => {
+      const g = ctx.createRadialGradient(px, py, 0, px, py, r);
+      g.addColorStop(0, `rgba(${rand() < 0.3 ? '50,60,40' : '40,36,30'},0.22)`); g.addColorStop(1, 'rgba(40,36,30,0)');
+      ctx.fillStyle = g; ctx.fillRect(px - r, py - r, r * 2, r * 2);
+    });
+  }
+  return finish(new THREE.CanvasTexture(c), renderer, true);
+}
+
+/** Orange / white windsock bands along the sock length (v axis). */
+export function makeWindsockTexture(renderer) {
+  const c = canvas(16, 160);
+  const ctx = c.getContext('2d');
+  for (let i = 0; i < 5; i++) {
+    ctx.fillStyle = i % 2 === 0 ? '#ff5a10' : '#f2f2ee';
+    ctx.fillRect(0, i * 32, 16, 32);
+  }
+  return finish(new THREE.CanvasTexture(c), renderer, true, false);
 }
 
 /** Grayscale low-frequency noise used to break up tiling. */

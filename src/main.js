@@ -32,6 +32,14 @@ const race = { next: 0, total: 8, lapStart: null, last: null, best: null, now: 0
 let lastT = performance.now();
 const clock = { getDelta() { const n = performance.now(); const d = (n - lastT) / 1000; lastT = n; return d; } };
 const omegas = [0, 0, 0, 0];
+let startVisible = false;
+let cineT = 0;
+
+const MODE_DESC = {
+  GPS: 'Holds position and height when you let go of the sticks. The easiest way to start, like a consumer camera drone.',
+  ANGLE: 'Keeps itself level, but you manage the throttle and height. The next step up.',
+  ACRO: 'No self-levelling: the sticks set rotation speed. How FPV pilots fly flips and rolls.',
+};
 
 function setLoading(t) { document.getElementById('loading-text').textContent = t; }
 
@@ -166,7 +174,61 @@ function toggleStart() {
   st.classList.toggle('hidden', !show);
   if (show && menu.isOpen) menu.close();
   paused = show || menu.isOpen;
+  startVisible = show;
+  document.getElementById('hud').classList.toggle('hidden', show);
   document.getElementById('start-btn').textContent = 'Resume';
+  if (show) syncStartScreen();
+}
+
+function syncStartScreen() {
+  document.querySelectorAll('#pick-drone .pick').forEach((b) => b.classList.toggle('active', b.dataset.profile === settings.profile));
+  document.querySelectorAll('#pick-mode button').forEach((b) => b.classList.toggle('active', b.dataset.mode === settings.mode));
+  document.getElementById('mode-desc').textContent = MODE_DESC[settings.mode] || '';
+}
+
+function setupStartScreen() {
+  document.querySelectorAll('#pick-drone .pick').forEach((b) => b.addEventListener('click', () => {
+    if (settings.profile !== b.dataset.profile) {
+      settings.profile = b.dataset.profile;
+      saveSettings(settings);
+      applySetting('profile');
+    }
+    syncStartScreen();
+  }));
+  document.querySelectorAll('#pick-mode button').forEach((b) => b.addEventListener('click', () => {
+    settings.mode = b.dataset.mode;
+    saveSettings(settings);
+    applySetting('mode');
+    syncStartScreen();
+  }));
+  document.getElementById('start-settings').addEventListener('click', () => {
+    toggleStart();
+    menu.open();
+    paused = true;
+  });
+  window.addEventListener('keydown', (e) => {
+    if (startVisible && e.code === 'Enter') { e.preventDefault(); document.getElementById('start-btn').click(); }
+  });
+  syncStartScreen();
+}
+
+/** Slow cinematic orbit around the parked drone behind the title screen. */
+function cinematicCamera(dt) {
+  cineT += dt;
+  const cam = rig.main;
+  const arm = fm.p.armLength;
+  const r = 0.55 + arm * 7.5;
+  const ang = cineT * 0.1 + 2.4;
+  const p = fm.pos;
+  cam.up.set(0, 1, 0);
+  cam.position.set(p.x + Math.sin(ang) * r, p.y + 0.25 + arm * 2.2 + Math.sin(cineT * 0.21) * arm, p.z + Math.cos(ang) * r);
+  // aim to the left of the drone so it sits in the open right half of the screen
+  const dir = new THREE.Vector3().subVectors(p, cam.position).normalize();
+  const right = new THREE.Vector3().crossVectors(dir, cam.up).normalize();
+  const look = p.clone().addScaledVector(right, -r * 0.2);
+  look.y -= r * 0.13;
+  cam.lookAt(look);
+  if (Math.abs(cam.fov - 50) > 0.01) { cam.fov = 50; cam.updateProjectionMatrix(); }
 }
 
 function updateWind() {
@@ -223,9 +285,9 @@ function render() {
   const W = window.innerWidth, H = window.innerHeight;
   renderer.setScissorTest(false);
   renderer.setViewport(0, 0, W, H);
-  setGimbalVisibility(rig.view.id);
+  setGimbalVisibility(startVisible ? 'chase' : rig.view.id);
   renderer.render(scene, rig.main);
-  if (rig.pipOn) {
+  if (rig.pipOn && !startVisible) {
     const pw = Math.round(Math.min(W * 0.3, 420));
     const ph = Math.round((pw * 9) / 16);
     const px = W - pw - 16;
@@ -281,10 +343,18 @@ function loop() {
   grass.update(world.time, rig.main.position,
     { pos: fm.pos, thrustFrac: thrAvg, agl: Math.max(0, fm.pos.y - fm.gear - groundH), size: fm.p.armLength / 0.18 }, env.wind);
   world.update(dt, fm.pos);
+  world.updateWindsock(dt, env.wind, world.time);
 
   const scale = fm.p.armLength / 0.18;
   rig.shake = fm.armed ? 0.3 + thrAvg * 1.5 : 0;
-  rig.update(dt, fm, model, scale);
+  if (startVisible) cinematicCamera(dt);
+  else rig.update(dt, fm, model, scale);
+  if (startVisible && hud.frame % 30 === 0) {
+    const pads = input.listGamepads();
+    const chip = document.getElementById('pad-status');
+    chip.textContent = pads.length ? `Gamepad: ${pads[0].id.replace(/\(.*\)/, '').trim().slice(0, 32)}` : 'Keyboard \u00b7 no gamepad';
+    chip.classList.toggle('on', pads.length > 0);
+  }
 
   hud.update({
     fm, sticks,
@@ -315,15 +385,17 @@ async function init() {
   grass = new GrassField(scene, world, mask.data, mask.size);
   buildDrone();
   resetDrone();
-  menu = new Menu({ settings, input, apply: applySetting });
+  // Any way of closing settings (Resume, X, backdrop, Esc) unpauses the sim
+  menu = new Menu({ settings, input, apply: applySetting, onClose: () => { paused = startVisible; } });
   for (const k of ['expo', 'fpvTilt', 'sunElev', 'fog', 'clouds', 'shadows', 'waterRefl', 'pip', 'sound', 'grass']) applySetting(k);
   input.on(onAction);
   rig.setView(0, fm);
   resize();
 
   document.getElementById('loading').classList.add('hidden');
-  document.getElementById('start').classList.remove('hidden');
-  document.getElementById('hud').classList.remove('hidden');
+  setupStartScreen();
+  toggleStart();
+  document.getElementById('start-btn').textContent = 'Start flying';
   document.getElementById('start-btn').addEventListener('click', () => {
     audio.start();
     toggleStart();

@@ -114,7 +114,7 @@ export class GrassField {
           float dist = length(wp - uCam.xz);
           float fade = 1.0 - smoothstep(uRadius * 0.55, uRadius, dist);
           float sc = step(h3, dens * 1.15) * fade;
-          float bladeH = (0.22 + h1 * 0.38) * (0.65 + 0.35 * dens);
+          float bladeH = (0.12 + h1 * 0.22) * (0.7 + 0.3 * dens);
           float ang = h2 * 6.2831;
           vec3 p = position;
           p.xz *= (0.8 + h3 * 0.6);
