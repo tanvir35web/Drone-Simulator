@@ -58,6 +58,7 @@ export class Input {
     this.listeners = [];
     this.prevButtons = [];
     this.prevAxes = [];
+    this.prevTriggerArmCombo = false;
     this.gamepad = null;
     this.learn = null;      // { type: 'axis'|'button', target, baseline, until }
     this.calibrating = null; // { min:[], max:[] }
@@ -214,6 +215,16 @@ export class Input {
 
       // Buttons (edge triggered)
       if (!this.learn) {
+        // Standard Gamepad mapping: ZL/L2 = 6, ZR/R2 = 7.
+        const zlPressed = gp.buttons[6] && (gp.buttons[6].pressed || gp.buttons[6].value > 0.5);
+        const zrPressed = gp.buttons[7] && (gp.buttons[7].pressed || gp.buttons[7].value > 0.5);
+        const triggerArmCombo = zlPressed && zrPressed;
+        if (triggerArmCombo && !this.prevTriggerArmCombo) {
+          this.source = 'gamepad';
+          this.fire('arm', 'trigger-combo');
+        }
+        this.prevTriggerArmCombo = triggerArmCombo;
+
         gp.buttons.forEach((b, i) => {
           const pressed = b.pressed || b.value > 0.5;
           if (pressed && !this.prevButtons[i]) {
@@ -224,6 +235,7 @@ export class Input {
       this.prevButtons = gp.buttons.map((b) => b.pressed || b.value > 0.5);
     } else if (this.source === 'gamepad') {
       this.source = 'keyboard';
+      this.prevTriggerArmCombo = false;
     }
 
     if (!this.enabled) return this.sticks;

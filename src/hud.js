@@ -89,7 +89,7 @@ export class HUD {
 
     // hints
     let hint = '';
-    if (!fm.armed && !fm.crashed) hint = fm.mode === 'GPS' ? 'Press Space (or your Arm button) to arm, then push throttle up to take off'
+    if (!fm.armed && !fm.crashed) hint = fm.mode === 'GPS' ? 'Press Space, your Arm button, or press ZL + ZR together to arm, then push throttle up to take off'
       : 'Lower throttle fully, then press Space to arm';
     else if (fm.armed && fm.onGround && fm.mode === 'GPS') hint = 'Push throttle up (W) to take off';
     else if (fm.soc < 0.2 && fm.armed) hint = 'LOW BATTERY - land now (X = return to home)';

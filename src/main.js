@@ -139,8 +139,12 @@ function onAction(a, arg) {
   if (a === 'learn') return;
   if (menu.isOpen || startVisible) {
     // Gamepad arm/start button closes the start screen for convenience
-    if (startVisible && a === 'arm' && input.source === 'gamepad') toggleStart();
-    return;
+    if (startVisible && a === 'arm' && input.source === 'gamepad') {
+      toggleStart();
+      if (arg !== 'trigger-combo') return;
+    } else {
+      return;
+    }
   }
   audio.start();
   switch (a) {
