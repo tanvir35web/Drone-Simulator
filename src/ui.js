@@ -84,12 +84,6 @@ export class Menu {
     document.getElementById('menu-x').addEventListener('click', () => this.close());
     this.root.addEventListener('mousedown', (e) => { if (e.target === this.root) this.close(); });
     this.resetBtn.addEventListener('click', () => this.resetTab());
-    // input.js ignores keys while a slider/select has focus, so handle Esc here.
-    window.addEventListener('keydown', (e) => {
-      if (!this.isOpen || e.code !== 'Escape') return;
-      const t = e.target;
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT')) { e.preventDefault(); t.blur(); this.close(); }
-    });
     this.renderTabs();
   }
 

@@ -130,7 +130,7 @@ function onAction(a, arg) {
   const startVisible = !document.getElementById('start').classList.contains('hidden');
   if (a === 'help') { toggleStart(); return; }
   if (a === 'menu') {
-    if (startVisible) { toggleStart(); return; }
+    if (startVisible) { openSettings(); return; }
     menu.toggle();
     paused = menu.isOpen;
     return;
@@ -194,6 +194,12 @@ function toggleStart() {
   if (show) syncStartScreen();
 }
 
+function openSettings() {
+  if (startVisible) toggleStart();
+  menu.open();
+  paused = true;
+}
+
 function syncStartScreen() {
   document.querySelectorAll('#pick-drone .pick').forEach((b) => b.classList.toggle('active', b.dataset.profile === settings.profile));
   document.querySelectorAll('#pick-mode button').forEach((b) => b.classList.toggle('active', b.dataset.mode === settings.mode));
@@ -216,9 +222,7 @@ function setupStartScreen() {
     syncStartScreen();
   }));
   document.getElementById('start-settings').addEventListener('click', () => {
-    toggleStart();
-    menu.open();
-    paused = true;
+    openSettings();
   });
   window.addEventListener('keydown', (e) => {
     if (startVisible && e.code === 'Enter') { e.preventDefault(); document.getElementById('start-btn').click(); }
@@ -405,8 +409,20 @@ async function init() {
   await nextFrame();
   buildDrone();
   resetDrone();
+  document.getElementById('crash-restart').addEventListener('click', resetDrone);
   // Any way of closing settings (Resume, X, backdrop, Esc) unpauses the sim
   menu = new Menu({ settings, input, apply: applySetting, onClose: () => { paused = startVisible; } });
+  window.addEventListener('keydown', (e) => {
+    if (e.code !== 'Escape') return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (menu.isOpen) {
+      menu.close();
+      paused = startVisible;
+    } else {
+      openSettings();
+    }
+  }, true);
   for (const k of ['expo', 'fpvTilt', 'sunElev', 'fog', 'clouds', 'shadows', 'waterRefl', 'pip', 'sound', 'grass']) applySetting(k);
   input.on(onAction);
   rig.setView(0, fm);

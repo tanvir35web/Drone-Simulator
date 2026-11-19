@@ -40,7 +40,7 @@ function loadConfig() {
 
 const KEY_ACTIONS = {
   Space: 'arm', KeyC: 'camera', KeyV: 'pip', KeyM: 'mode', KeyR: 'reset', KeyX: 'rth',
-  KeyH: 'help', Escape: 'menu', KeyG: 'race', KeyO: 'osd',
+  KeyH: 'help', KeyG: 'race', KeyO: 'osd',
   Digit1: 'cam1', Digit2: 'cam2', Digit3: 'cam3', Digit4: 'cam4', Digit5: 'cam5', Digit6: 'cam6',
 };
 const FLIGHT_KEYS = new Set(['KeyW', 'KeyS', 'KeyA', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
