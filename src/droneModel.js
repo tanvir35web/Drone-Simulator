@@ -8,6 +8,10 @@ import * as HD from './texturesHD.js';
 export const MOTOR_DIRS = [1, -1, 1, -1]; // +1 = CCW seen from above
 
 const Y = new THREE.Vector3(0, 1, 0);
+const Z = new THREE.Vector3(0, 0, 1);
+const gimbalEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+const gimbalWorldQuat = new THREE.Quaternion();
+const bodyEuler = new THREE.Euler(0, 0, 0, 'YXZ');
 
 /** Twisted, tapered airfoil blade along +x, spinning about +y. ccw = leading edge toward -z at +x. */
 function bladeGeometry({ R, hub, rootChord, maxChord, tipChord, pitchRoot, pitchTip, thick, segs = 14, ccw = true }) {
@@ -79,6 +83,21 @@ function ellipsoid(sx, sy, sz, mat, seg = 40) {
   return m;
 }
 
+function armBeam(a, b, width, height, mat) {
+  const dir = new THREE.Vector3().subVectors(b, a);
+  const mesh = new THREE.Mesh(new RoundedBoxGeometry(width, height, dir.length(), 4, Math.min(width, height) * 0.35), mat);
+  mesh.position.copy(a).add(b).multiplyScalar(0.5);
+  mesh.quaternion.setFromUnitVectors(Z, dir.normalize());
+  return mesh;
+}
+
+function axialCylinder(radius, length, position, axis, mat, segments = 20) {
+  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, length, segments), mat);
+  mesh.position.copy(position);
+  mesh.quaternion.setFromUnitVectors(Y, axis.clone().normalize());
+  return mesh;
+}
+
 function led(color, r) {
   return new THREE.Mesh(new THREE.SphereGeometry(r, 10, 8),
     new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 4, roughness: 0.3 }));
@@ -97,7 +116,18 @@ function makeBlur(renderer, R, blades) {
 function buildCameraDrone(p, renderer) {
   const root = new THREE.Group();
   const d = p.armLength / Math.SQRT2;
-  const white = new THREE.MeshPhysicalMaterial({ color: 0xe8eaeb, roughness: 0.3, clearcoat: 0.9, clearcoatRoughness: 0.12 });
+  const visual = p.visual || 'camera';
+  const avata = visual === 'avata2';
+  const bodySizes = {
+    camera: [0.105, 0.058, 0.185],
+    mini4pro: [0.06, 0.027, 0.105],
+    air3: [0.078, 0.04, 0.14],
+    mavic3pro: [0.085, 0.043, 0.155],
+    avata2: [0.075, 0.042, 0.125],
+  };
+  const [bodyX, bodyY, bodyZ] = bodySizes[visual] || bodySizes.camera;
+  const shellColor = p.shellColor || 0xe8eaeb;
+  const white = new THREE.MeshPhysicalMaterial({ color: shellColor, roughness: 0.3, clearcoat: 0.9, clearcoatRoughness: 0.12 });
   const grey = new THREE.MeshPhysicalMaterial({ color: 0x4d5257, roughness: 0.42, clearcoat: 0.5, clearcoatRoughness: 0.3 });
   const dark = new THREE.MeshStandardMaterial({ color: 0x18191c, roughness: 0.45, metalness: 0.35 });
   const carbonTex = HD.makeCarbonTexture(renderer);
@@ -109,120 +139,192 @@ function buildCameraDrone(p, renderer) {
   const propMat = new THREE.MeshPhysicalMaterial({ color: 0x141518, roughness: 0.35, clearcoat: 0.6, side: THREE.DoubleSide });
 
   // Fuselage
-  const body = ellipsoid(0.105, 0.058, 0.185, white);
+  const body = ellipsoid(bodyX, bodyY, bodyZ, white);
   root.add(body);
-  const cover = ellipsoid(0.085, 0.045, 0.135, grey);
-  cover.position.set(0, 0.03, 0.015);
+  const cover = ellipsoid(bodyX * 0.8, bodyY * 0.78, bodyZ * 0.72, grey);
+  cover.position.set(0, bodyY * 0.48, bodyZ * 0.08);
   root.add(cover);
-  const visor = ellipsoid(0.072, 0.034, 0.05, glass);
-  visor.position.set(0, 0.006, -0.155);
+  const visor = ellipsoid(bodyX * 0.68, bodyY * 0.58, bodyZ * 0.28, glass);
+  visor.position.set(0, 0.006, -bodyZ * 0.82);
   root.add(visor);
   for (const sx of [-1, 1]) {
-    const s = new THREE.Mesh(new THREE.CylinderGeometry(0.009, 0.009, 0.01, 16).rotateX(Math.PI / 2), glass);
-    s.position.set(sx * 0.03, 0.006, -0.198);
-    root.add(s);
+    const sensor = new THREE.Mesh(new THREE.CylinderGeometry(0.009, 0.009, 0.01, 16).rotateX(Math.PI / 2), glass);
+    sensor.position.set(sx * bodyX * 0.42, 0.006, -bodyZ * 0.98);
+    root.add(sensor);
     const vent = new THREE.Mesh(new RoundedBoxGeometry(0.004, 0.022, 0.07, 2, 0.002), dark);
-    vent.position.set(sx * 0.104, 0, 0.02);
+    vent.scale.set(1, bodyY / 0.058, bodyZ / 0.185);
+    vent.position.set(sx * bodyX * 1.02, 0, bodyZ * 0.1);
     root.add(vent);
   }
-  const gps = new THREE.Mesh(new THREE.SphereGeometry(0.03, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), white);
-  gps.position.set(0, 0.07, 0.07);
+  const gps = new THREE.Mesh(new THREE.SphereGeometry(Math.min(0.03, bodyY * 0.52), 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), white);
+  gps.position.set(0, bodyY * 1.2, bodyZ * 0.4);
   root.add(gps);
-  const batt = new THREE.Mesh(new RoundedBoxGeometry(0.12, 0.05, 0.1, 3, 0.012), grey);
-  batt.position.set(0, 0.0, 0.16);
+  const batt = new THREE.Mesh(new RoundedBoxGeometry(bodyX * 1.15, bodyY * 0.86, bodyZ * 0.58, 3, Math.min(0.012, bodyY * 0.2)), grey);
+  batt.position.set(0, 0.0, bodyZ * 0.92);
   root.add(batt);
   for (let i = 0; i < 4; i++) {
     const l = led(0x30ff60, 0.003);
-    l.position.set(-0.018 + i * 0.012, 0.012, 0.211);
+    l.position.set(-0.018 + i * 0.012, bodyY * 0.2, bodyZ * 1.12);
     root.add(l);
   }
   const strobe = led(0xffffff, 0.009);
-  strobe.position.set(0, 0.075, 0.115);
+  strobe.position.set(0, bodyY * 1.3, bodyZ * 0.6);
   root.add(strobe);
 
   // Arms, motors, props
   const motorPos = [[d, -d], [-d, -d], [-d, d], [d, d]];
   const props = [], blurs = [];
-  const propOpts = { R: p.propRadius, hub: 0.016, rootChord: 0.026, maxChord: 0.04, tipChord: 0.016, pitchRoot: 0.42, pitchTip: 0.12, thick: 0.006 };
-  const propGeoCCW = propGeometry(propOpts, 2, true);
-  const propGeoCW = propGeometry(propOpts, 2, false);
+  const propScale = p.propRadius;
+  const armMat = avata ? dark : white;
+  const armPivotMat = avata ? dark : grey;
+  const motorRadius = Math.min(0.03, Math.max(0.006, propScale * 0.1));
+  const motorHeight = motorRadius * 0.82 * Math.max(0.75, propScale / 0.2);
+  const propOpts = {
+    R: propScale, hub: propScale * 0.08, rootChord: propScale * 0.13,
+    maxChord: propScale * 0.2, tipChord: propScale * 0.08,
+    pitchRoot: 0.42, pitchTip: 0.12, thick: propScale * 0.03,
+  };
+  const blades = p.propBlades || 2;
+  const propGeoCCW = propGeometry(propOpts, blades, true);
+  const propGeoCW = propGeometry(propOpts, blades, false);
   motorPos.forEach(([mx, mz], i) => {
     const dir = new THREE.Vector3(mx, 0, mz).normalize();
-    const start = dir.clone().multiplyScalar(0.075);
-    const end = new THREE.Vector3(mx, 0, mz).addScaledVector(dir, -0.02);
-    root.add(tube(start, end, 0.014, 0.012, carbon, 16));
-    const fair = ellipsoid(0.03, 0.026, 0.055, white, 24);
-    fair.position.copy(dir).multiplyScalar(0.085);
+    const start = dir.clone().multiplyScalar(bodyX * (avata ? 0.95 : 1.15));
+    const motor = new THREE.Vector3(mx, 0, mz);
+    const end = motor.clone().addScaledVector(dir, -motorRadius * 1.6);
+    if (!avata) {
+      root.add(armBeam(start, end, bodyY * 0.46, bodyY * 0.32, armMat));
+      const pivot = ellipsoid(bodyY * 0.42, bodyY * 0.38, bodyY * 0.42, armPivotMat, 24);
+      pivot.position.copy(start);
+      root.add(pivot);
+      const hingeAxis = new THREE.Vector3(-dir.z, 0, dir.x);
+      const pinCenter = start.clone().addScaledVector(hingeAxis, bodyY * 0.14);
+      const pinRadius = bodyY * 0.12;
+      root.add(axialCylinder(pinRadius, bodyY * 0.72, pinCenter, hingeAxis, dark));
+      for (const side of [-1, 1]) {
+        const washerCenter = pinCenter.clone().addScaledVector(hingeAxis, side * bodyY * 0.27);
+        root.add(axialCylinder(pinRadius * 1.25, bodyY * 0.08, washerCenter, hingeAxis, silver, 16));
+        const screwCenter = washerCenter.clone().addScaledVector(hingeAxis, side * bodyY * 0.055);
+        root.add(axialCylinder(pinRadius * 0.42, bodyY * 0.025, screwCenter, hingeAxis, dark, 12));
+      }
+      const armCollar = ellipsoid(bodyY * 0.2, bodyY * 0.19, bodyY * 0.2, armPivotMat, 20);
+      armCollar.position.copy(motor).addScaledVector(dir, -motorRadius * 1.35);
+      root.add(armCollar);
+    } else {
+      root.add(armBeam(start, end, bodyY * 0.52, bodyY * 0.46, dark));
+      const duct = new THREE.Mesh(new THREE.TorusGeometry(propScale + 0.006, 0.005, 8, 36), dark);
+      duct.rotation.x = Math.PI / 2;
+      duct.position.set(mx, motorRadius * 0.95 + motorHeight, mz);
+      root.add(duct);
+      const ductBraceRadius = propScale * 0.72;
+      for (const side of [-1, 1]) {
+        const brace = new THREE.Mesh(new THREE.BoxGeometry(ductBraceRadius * 2, 0.003, 0.003),
+          new THREE.MeshStandardMaterial({ color: 0x24292d, roughness: 0.55 }));
+        brace.position.set(mx, motorRadius * 0.95 + motorHeight, mz);
+        brace.rotation.y = side * Math.PI / 4;
+        root.add(brace);
+      }
+    }
+    const fair = ellipsoid(Math.min(0.03, bodyX * 0.3), Math.min(0.026, bodyY * 0.45), Math.min(0.055, bodyZ * 0.3), white, 24);
+    fair.position.copy(start).addScaledVector(dir, bodyY * 0.25);
     fair.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
     root.add(fair);
 
-    const pod = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.025, 0.05, 28), white);
+    const motorMount = new THREE.Mesh(new THREE.CylinderGeometry(motorRadius * 1.3, motorRadius * 1.45, motorRadius * 0.22, 24), armPivotMat);
+    motorMount.position.set(mx, -motorRadius * 0.42, mz);
+    root.add(motorMount);
+    const pod = new THREE.Mesh(new THREE.CylinderGeometry(motorRadius, motorRadius * 0.84, motorRadius * 1.75, 28), white);
     pod.position.set(mx, 0, mz);
+    pod.scale.y = Math.max(0.75, propScale / 0.2);
     root.add(pod);
-    const bell = new THREE.Mesh(new THREE.CylinderGeometry(0.029, 0.029, 0.022, 28), bellMat);
-    bell.position.set(mx, 0.036, mz);
+    const bell = new THREE.Mesh(new THREE.CylinderGeometry(motorRadius * 0.92, motorRadius * 0.92, motorHeight, 28), bellMat);
+    bell.position.set(mx, motorRadius * 0.62, mz);
     root.add(bell);
-    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.014, 0.008, 20), silver);
-    cap.position.set(mx, 0.05, mz);
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(motorRadius * 0.38, motorRadius * 0.44, motorRadius * 0.2, 20), silver);
+    cap.position.set(mx, motorRadius * 0.62 + motorHeight * 0.55, mz);
     root.add(cap);
     const l = led(i < 2 ? 0xff2a1a : 0x22ff55, 0.008);
-    l.position.set(mx, -0.028, mz);
+    l.position.set(mx, -motorRadius * 0.9, mz);
     root.add(l);
 
     const prop = new THREE.Mesh(MOTOR_DIRS[i] > 0 ? propGeoCCW : propGeoCW, propMat);
-    prop.position.set(mx, 0.06, mz);
+    prop.position.set(mx, motorRadius * 0.95 + motorHeight, mz);
     prop.rotation.y = i * 0.9;
     root.add(prop);
     props.push(prop);
-    const blur = makeBlur(renderer, p.propRadius, 2);
-    blur.position.set(mx, 0.061, mz);
+    const blur = makeBlur(renderer, p.propRadius, blades);
+    blur.position.set(mx, motorRadius * 0.96 + motorHeight, mz);
     root.add(blur);
     blurs.push(blur);
   });
 
   // Landing gear (two struts + skids)
-  for (const sx of [-1, 1]) {
-    for (const sz of [-1, 1]) {
-      root.add(tube(new THREE.Vector3(sx * 0.055, -0.03, sz * 0.05), new THREE.Vector3(sx * 0.13, -0.185, sz * 0.075), 0.009, 0.008, grey));
-    }
-    const skid = new THREE.Mesh(new THREE.CylinderGeometry(0.0105, 0.0105, 0.32, 14).rotateX(Math.PI / 2), dark);
-    skid.position.set(sx * 0.13, -0.19, 0);
-    root.add(skid);
-    for (const sz of [-1, 1]) {
-      const capR = new THREE.Mesh(new THREE.SphereGeometry(0.0115, 12, 8), dark);
-      capR.position.set(sx * 0.13, -0.19, sz * 0.16);
-      root.add(capR);
+  if (!avata) {
+    const legY = -Math.max(0.025, p.gear - bodyY * 0.2);
+    const skidX = Math.max(bodyX * 1.2, d * 1.15);
+    const skidZ = Math.max(bodyZ * 0.78, 0.08);
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        root.add(tube(new THREE.Vector3(sx * bodyX * 0.52, -bodyY * 0.45, sz * bodyZ * 0.3),
+          new THREE.Vector3(sx * skidX, legY, sz * bodyZ * 0.36), Math.max(0.004, bodyY * 0.16), Math.max(0.0035, bodyY * 0.14), grey));
+      }
+      const skid = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, skidZ * 2, 14).rotateX(Math.PI / 2), dark);
+      skid.position.set(sx * skidX, legY, 0);
+      root.add(skid);
+      for (const sz of [-1, 1]) {
+        const capR = new THREE.Mesh(new THREE.SphereGeometry(0.007, 12, 8), dark);
+        capR.position.set(sx * skidX, legY, sz * skidZ);
+        root.add(capR);
+      }
     }
   }
 
-  // 3-axis gimbal + camera
+  // Stabilized payload cameras
   const gimbal = new THREE.Group();
-  gimbal.position.set(0, -0.05, -0.12);
-  const yawMotor = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.022, 24), dark);
-  gimbal.add(yawMotor);
-  const arm = new THREE.Mesh(new RoundedBoxGeometry(0.014, 0.05, 0.014, 2, 0.004), dark);
-  arm.position.set(0.045, -0.03, 0);
-  gimbal.add(arm);
-  const armTop = new THREE.Mesh(new RoundedBoxGeometry(0.05, 0.012, 0.014, 2, 0.004), dark);
-  armTop.position.set(0.022, -0.01, 0);
-  gimbal.add(armTop);
-  const rollMotor = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.012, 20).rotateZ(Math.PI / 2), dark);
-  rollMotor.position.set(0.045, -0.065, 0);
-  gimbal.add(rollMotor);
+  const gimbalPosition = p.gimbalCam || [0, -0.05, -0.12];
+  gimbal.position.set(...gimbalPosition);
+  const gimbalScale = bodyX / 0.105;
+  if (!avata) {
+    const yawRadius = Math.min(0.02, bodyX * 0.2);
+    const yawMotor = new THREE.Mesh(new THREE.CylinderGeometry(yawRadius, yawRadius, 0.022 * gimbalScale, 24), dark);
+    gimbal.add(yawMotor);
+    const arm = new THREE.Mesh(new RoundedBoxGeometry(0.014 * gimbalScale, 0.05 * gimbalScale, 0.014 * gimbalScale, 2, 0.004 * gimbalScale), dark);
+    arm.position.set(0.045 * gimbalScale, -0.03 * gimbalScale, 0);
+    gimbal.add(arm);
+    const armTop = new THREE.Mesh(new RoundedBoxGeometry(0.05 * gimbalScale, 0.012 * gimbalScale, 0.014 * gimbalScale, 2, 0.004 * gimbalScale), dark);
+    armTop.position.set(0.022 * gimbalScale, -0.01 * gimbalScale, 0);
+    gimbal.add(armTop);
+    const rollMotor = new THREE.Mesh(new THREE.CylinderGeometry(0.016 * gimbalScale, 0.016 * gimbalScale,
+      0.012 * gimbalScale, 20).rotateZ(Math.PI / 2), dark);
+    rollMotor.position.set(0.045 * gimbalScale, -0.065 * gimbalScale, 0);
+    gimbal.add(rollMotor);
+  }
   const head = new THREE.Group();
-  head.position.set(0, -0.065, 0);
-  const camBody = new THREE.Mesh(new RoundedBoxGeometry(0.075, 0.058, 0.062, 4, 0.012), grey);
+  head.position.set(0, avata ? 0 : -0.065 * gimbalScale, 0);
+  const camBody = new THREE.Mesh(new RoundedBoxGeometry(bodyX * 0.68, bodyY * 0.78, bodyZ * 0.34, 4, Math.min(0.012, bodyY * 0.22)), grey);
   head.add(camBody);
-  const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.023, 0.026, 0.026, 32).rotateX(Math.PI / 2), dark);
-  lens.position.set(0, 0, -0.042);
+  const lensRadius = Math.min(0.023, bodyY * 0.35);
+  const lens = new THREE.Mesh(new THREE.CylinderGeometry(lensRadius, lensRadius * 1.12, 0.026, 32).rotateX(Math.PI / 2), dark);
+  lens.position.set(0, 0, -bodyZ * 0.25);
   head.add(lens);
-  const lensGlass = new THREE.Mesh(new THREE.CircleGeometry(0.019, 32), glass);
-  lensGlass.position.set(0, 0, -0.0555);
+  const lensGlass = new THREE.Mesh(new THREE.CircleGeometry(lensRadius * 0.82, 32), glass);
+  lensGlass.position.set(0, 0, -bodyZ * 0.25 - 0.014);
   lensGlass.rotation.y = Math.PI;
   head.add(lensGlass);
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.0225, 0.0018, 8, 32), silver);
-  ring.position.set(0, 0, -0.055);
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(lensRadius * 0.98, 0.0018, 8, 32), silver);
+  ring.position.set(0, 0, -bodyZ * 0.25 - 0.013);
   head.add(ring);
+  const extraCameras = visual === 'mavic3pro' ? [-1, 1] : visual === 'air3' ? [1] : [];
+  for (const side of extraCameras) {
+    const extraRadius = lensRadius * (visual === 'mavic3pro' ? 0.58 : 0.72);
+    const extra = new THREE.Mesh(new THREE.CylinderGeometry(extraRadius, extraRadius * 1.1, 0.018, 24).rotateX(Math.PI / 2), dark);
+    extra.position.set(side * bodyX * 0.25, -bodyY * 0.25, -bodyZ * 0.22);
+    head.add(extra);
+    const extraGlass = new THREE.Mesh(new THREE.CircleGeometry(extraRadius * 0.78, 20), glass);
+    extraGlass.position.set(extra.position.x, extra.position.y, extra.position.z - 0.01);
+    extraGlass.rotation.y = Math.PI;
+    head.add(extraGlass);
+  }
   gimbal.add(head);
   root.add(gimbal);
 
@@ -240,6 +342,7 @@ function buildRacer(p, renderer) {
   const anod = new THREE.MeshStandardMaterial({ color: 0x8a2be2, roughness: 0.25, metalness: 0.9 });
   const tpu = new THREE.MeshStandardMaterial({ color: 0xff6a13, roughness: 0.6 });
   const dark = new THREE.MeshStandardMaterial({ color: 0x141518, roughness: 0.45, metalness: 0.3 });
+  const hardware = new THREE.MeshStandardMaterial({ color: 0xb9bec4, roughness: 0.25, metalness: 1 });
   const bellMat = new THREE.MeshStandardMaterial({ color: 0xd8262c, roughness: 0.25, metalness: 0.9 });
   const glass = new THREE.MeshPhysicalMaterial({ color: 0x05070c, roughness: 0.02, metalness: 0.4, clearcoat: 1 });
   const propMat = new THREE.MeshPhysicalMaterial({ color: 0xff7a1a, roughness: 0.25, transparent: true, opacity: 0.88, side: THREE.DoubleSide });
@@ -322,6 +425,14 @@ function buildRacer(p, renderer) {
   const geoCCW = propGeometry(propOpts, 3, true);
   const geoCW = propGeometry(propOpts, 3, false);
   motorPos.forEach(([mx, mz], i) => {
+    const motorMount = new THREE.Mesh(new THREE.CylinderGeometry(0.017, 0.019, 0.004, 28), anod);
+    motorMount.position.set(mx, y0 + 0.003, mz);
+    root.add(motorMount);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+      const screw = new THREE.Mesh(new THREE.CylinderGeometry(0.0022, 0.0022, 0.002, 10), hardware);
+      screw.position.set(mx + sx * 0.009, y0 + 0.006, mz + sz * 0.009);
+      root.add(screw);
+    }
     const stator = new THREE.Mesh(new THREE.CylinderGeometry(0.0125, 0.0125, 0.007, 20), dark);
     stator.position.set(mx, y0 + 0.006, mz);
     root.add(stator);
@@ -365,7 +476,13 @@ export function createDroneModel(profile, renderer) {
       const ph = t % 1.3;
       m.strobe.visible = ph < 0.05 || (ph > 0.15 && ph < 0.2);
     }
-    if (m.gimbalHead) m.gimbalHead.rotation.x = gimbalPitch;
+    if (m.gimbalHead) {
+      m.root.getWorldQuaternion(gimbalWorldQuat);
+      bodyEuler.setFromQuaternion(gimbalWorldQuat, 'YXZ');
+      gimbalEuler.set(gimbalPitch, bodyEuler.y, 0, 'YXZ');
+      gimbalWorldQuat.setFromEuler(gimbalEuler);
+      m.gimbalHead.quaternion.copy(m.root.quaternion).invert().multiply(gimbalWorldQuat);
+    }
   };
   return m;
 }

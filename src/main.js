@@ -207,14 +207,29 @@ function syncStartScreen() {
 }
 
 function setupStartScreen() {
-  document.querySelectorAll('#pick-drone .pick').forEach((b) => b.addEventListener('click', () => {
-    if (settings.profile !== b.dataset.profile) {
-      settings.profile = b.dataset.profile;
-      saveSettings(settings);
-      applySetting('profile');
-    }
-    syncStartScreen();
-  }));
+  const dronePicker = document.getElementById('pick-drone');
+  for (const [key, profile] of Object.entries(PROFILES)) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'pick';
+    button.dataset.profile = key;
+    const name = document.createElement('span');
+    name.className = 'pick-name';
+    name.textContent = profile.name;
+    const spec = document.createElement('span');
+    spec.className = 'pick-spec';
+    spec.textContent = profile.summary || `${(profile.mass * 1000).toFixed(0)} g · ${profile.style === 'racer' ? 'FPV racer' : 'camera drone'}`;
+    button.append(name, spec);
+    button.addEventListener('click', () => {
+      if (settings.profile !== key) {
+        settings.profile = key;
+        saveSettings(settings);
+        applySetting('profile');
+      }
+      syncStartScreen();
+    });
+    dronePicker.append(button);
+  }
   document.querySelectorAll('#pick-mode button').forEach((b) => b.addEventListener('click', () => {
     settings.mode = b.dataset.mode;
     saveSettings(settings);
@@ -382,7 +397,7 @@ function loop() {
   });
 
   const listenerDist = rig.view.id === 'fpv' || rig.view.id === 'gimbal' ? 0.5 : rig.main.position.distanceTo(fm.pos);
-  audio.update(paused ? 0 : thrAvg, listenerDist, fm.profileKey === 'racer');
+  audio.update(paused ? 0 : thrAvg, listenerDist, fm.profileKey === 'racer' || fm.p.visual === 'avata2');
 
   render();
 }

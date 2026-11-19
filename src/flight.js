@@ -14,6 +14,7 @@ export const PROFILES = {
   camera: {
     name: 'Pro camera drone (3.2 kg)',
     style: 'camera',
+    visual: 'camera',
     mass: 3.2, armLength: 0.31, propRadius: 0.2,
     inertia: [0.075, 0.13, 0.075],
     twr: 2.4, kYaw: 0.03, motorTau: 0.06,
@@ -30,6 +31,7 @@ export const PROFILES = {
   racer: {
     name: 'FPV racer 5" (650 g)',
     style: 'racer',
+    visual: 'racer',
     mass: 0.65, armLength: 0.11, propRadius: 0.064,
     inertia: [0.0032, 0.006, 0.0032],
     twr: 7, kYaw: 0.014, motorTau: 0.02,
@@ -43,12 +45,73 @@ export const PROFILES = {
     fpvCam: [0, 0.028, -0.06],
     gimbalCam: [0, -0.02, -0.07],
   },
+  mini4pro: {
+    name: 'DJI Mini 4 Pro (< 249 g)',
+    summary: '34 min · 16 m/s · 4K HDR',
+    style: 'camera', visual: 'mini4pro', shellColor: 0xe7e9e9,
+    mass: 0.249, armLength: 0.16, propRadius: 0.06,
+    inertia: [0.00055, 0.0009, 0.00055],
+    twr: 2.2, kYaw: 0.0025, motorTau: 0.035,
+    dragBody: [0.008, 0.016, 0.009], dragLin: 0.05,
+    rateKp: 24, rateKi: 10, angleKp: 8,
+    maxAngle: 35, yawRate: 120, acroRate: 400,
+    gpsSpeed: 12, gpsClimb: 5, gpsDescend: 5, gpsAccel: 3.5,
+    cells: 2, energyWh: 18.96, propEff: 0.45, avionicsW: 8,
+    crashSpeed: 4, omegaMax: 1500, gear: 0.035,
+    fpvCam: [0, 0.015, -0.13], gimbalCam: [0, -0.025, -0.085],
+  },
+  air3: {
+    name: 'DJI Air 3 (720 g)',
+    summary: '46 min · 21 m/s · dual camera',
+    style: 'camera', visual: 'air3', shellColor: 0x777d82,
+    mass: 0.72, armLength: 0.20, propRadius: 0.085,
+    inertia: [0.0021, 0.0032, 0.0021],
+    twr: 2.4, kYaw: 0.006, motorTau: 0.04,
+    dragBody: [0.018, 0.032, 0.016], dragLin: 0.05,
+    rateKp: 22, rateKi: 9, angleKp: 8,
+    maxAngle: 35, yawRate: 120, acroRate: 360,
+    gpsSpeed: 12, gpsClimb: 5, gpsDescend: 5, gpsAccel: 4.5,
+    cells: 4, energyWh: 62.6, propEff: 0.55, avionicsW: 10,
+    crashSpeed: 4.5, omegaMax: 1100, gear: 0.07,
+    fpvCam: [0, 0.015, -0.16], gimbalCam: [0, -0.045, -0.11],
+  },
+  mavic3pro: {
+    name: 'DJI Mavic 3 Pro (958 g)',
+    summary: '43 min · 21 m/s · triple camera',
+    style: 'camera', visual: 'mavic3pro', shellColor: 0x777b7e,
+    mass: 0.958, armLength: 0.23, propRadius: 0.1,
+    inertia: [0.0038, 0.0058, 0.0038],
+    twr: 2.3, kYaw: 0.009, motorTau: 0.045,
+    dragBody: [0.025, 0.04, 0.02], dragLin: 0.05,
+    rateKp: 20, rateKi: 8, angleKp: 7,
+    maxAngle: 35, yawRate: 100, acroRate: 320,
+    gpsSpeed: 15, gpsClimb: 6, gpsDescend: 6, gpsAccel: 4.2,
+    cells: 4, energyWh: 77, propEff: 0.54, avionicsW: 12,
+    crashSpeed: 4.5, omegaMax: 1000, gear: 0.085,
+    fpvCam: [0, 0.015, -0.17], gimbalCam: [0, -0.05, -0.125],
+  },
+  avata2: {
+    name: 'DJI Avata 2 (377 g)',
+    summary: '23 min · 16 m/s · ducted FPV',
+    style: 'camera', visual: 'avata2', shellColor: 0x33383d,
+    mass: 0.377, armLength: 0.09, propRadius: 0.045,
+    inertia: [0.0008, 0.0012, 0.0008],
+    twr: 2.6, kYaw: 0.0035, motorTau: 0.025,
+    dragBody: [0.012, 0.02, 0.012], dragLin: 0.055,
+    rateKp: 32, rateKi: 14, angleKp: 10,
+    maxAngle: 45, yawRate: 220, acroRate: 600,
+    gpsSpeed: 8, gpsClimb: 6, gpsDescend: 6, gpsAccel: 7,
+    cells: 4, energyWh: 31.7, propEff: 0.34, avionicsW: 9, propBlades: 3,
+    crashSpeed: 5.5, omegaMax: 2200, gear: 0.055,
+    fpvCam: [0, 0.015, -0.115], gimbalCam: [0, 0, -0.112],
+  },
 };
 
 export const MODES = ['GPS', 'ANGLE', 'ACRO'];
 
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
+const _v3 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion();
 const _q2 = new THREE.Quaternion();
 const _e = new THREE.Euler(0, 0, 0, 'YXZ');
@@ -430,7 +493,7 @@ export class FlightModel {
     // motion and brakes smoothly instead of snapping to a new tilt.
     const sm = this.smoothMul;
     const wv = 2.8 / sm;
-    const aLim = this.rth ? 3 : (p.style === 'racer' ? 10 : 5.5);
+    const aLim = this.rth ? 3 : (p.gpsAccel || (p.style === 'racer' ? 10 : 5.5));
     const jx = wv * wv * (vdx - this.vCmd.x) - 2 * wv * this.aCmd.x;
     const jz = wv * wv * (vdz - this.vCmd.z) - 2 * wv * this.aCmd.z;
     this.aCmd.x += jx * h; this.aCmd.z += jz * h;
@@ -525,21 +588,33 @@ export class FlightModel {
     // Ground
     const bottom = this.pos.y - this.gear;
     if (bottom <= groundH) {
-      const impact = -this.vel.y;
-      this.pos.y = groundH + this.gear;
-      if (!this.crashed && (impact > p.crashSpeed || (up.y < 0.35 && (impact > 0.5 || this.armed)))) {
+      const sample = 2;
+      const dhdx = (this.world.heightAt(this.pos.x + sample, this.pos.z) - this.world.heightAt(this.pos.x - sample, this.pos.z)) / (2 * sample);
+      const dhdz = (this.world.heightAt(this.pos.x, this.pos.z + sample) - this.world.heightAt(this.pos.x, this.pos.z - sample)) / (2 * sample);
+      const normal = _v3.set(-dhdx, 1, -dhdz).normalize();
+      const normalSpeed = this.vel.dot(normal);
+      const impact = Math.max(0, -normalSpeed);
+      const penetration = groundH + this.gear - this.pos.y;
+      this.pos.addScaledVector(normal, penetration / Math.max(normal.y, 0.2));
+      if (!this.crashed && (impact > p.crashSpeed || (up.dot(normal) < 0.35 && (impact > 0.5 || this.armed)))) {
         this.crash(impact > p.crashSpeed ? `Hard impact (${impact.toFixed(1)} m/s)` : 'Drone flipped over');
       }
-      if (this.vel.y < 0) this.vel.y = this.crashed ? -this.vel.y * 0.15 : 0;
+      if (normalSpeed < 0) {
+        const restitution = this.crashed ? 0.15 : (impact > 1 ? 0.08 : 0);
+        this.vel.addScaledVector(normal, -(1 + restitution) * normalSpeed);
+      }
       const weight = p.mass * G;
       if (totalThrust < weight * 0.95 || this.crashed) {
         const f = Math.exp(-h * (this.crashed ? 3 : 10));
-        this.vel.x *= f; this.vel.z *= f;
+        const normalVelocity = this.vel.dot(normal);
+        _v2.copy(this.vel).addScaledVector(normal, -normalVelocity).multiplyScalar(f);
+        this.vel.copy(_v2).addScaledVector(normal, normalVelocity);
         if (!this.crashed) {
-          // settle level on landing gear
+          // Settle onto the local terrain while preserving the drone's heading.
           _e.setFromQuaternion(this.quat, 'YXZ');
-          _q1.setFromAxisAngle(UP, _e.y);
-          this.quat.slerp(_q1, Math.min(1, h * 10));
+          _q1.setFromUnitVectors(UP, normal);
+          _q2.setFromAxisAngle(UP, _e.y).multiply(_q1);
+          this.quat.slerp(_q2, Math.min(1, h * 10));
           this.omega.multiplyScalar(Math.exp(-h * 25));
         } else {
           this.omega.multiplyScalar(Math.exp(-h * 4));
